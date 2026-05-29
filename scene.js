@@ -8,6 +8,8 @@
  * 3D-модели зданий и кораблей подключаются позже (см. loadModels / GLTF).
  */
 import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
 // ----------------------------------------------------------------- palette
 const COL = {
@@ -31,6 +33,39 @@ const LOC = window.MTK24_LOCATIONS || { points: {}, routes: {}, directions: {} }
 const SCN = window.MTK24_SCENARIO || { duration: 60, shots: [] };
 function loc(key) { return LOC.points[key] || LOC.directions[key] || null; }
 
+// ----------------------------------------------------------------- 3D-модели ориентиров (GLTF)
+// лёгкие low-poly .glb (сгенерированы tools/build_models.mjs). size — желаемый
+// горизонтальный габарит в мировых единицах; yaw — доворот вокруг вертикали.
+const MODEL_CFG = {
+  smolny:    { file: "smolny.glb",    size: 9,  yaw: 0 },
+  winter:    { file: "winter.glb",    size: 17, yaw: 0 },
+  fortress:  { file: "fortress.glb",  size: 7,  yaw: 0 },
+  mariinsky: { file: "mariinsky.glb", size: 12, yaw: 0 },
+  tauride:   { file: "tauride.glb",   size: 16, yaw: 0 },
+  aurora:    { file: "aurora.glb",    size: 18, yaw: -0.35 },
+};
+const MODEL_DIR = "./assets/models/";
+const modelCache = {};        // key → нормированный THREE.Group (шаблон для clone)
+let modelsReady = false;
+function preloadModels() {
+  const loader = new GLTFLoader();
+  const jobs = Object.entries(MODEL_CFG).map(([key, cfg]) => new Promise((res) => {
+    loader.load(MODEL_DIR + cfg.file, (gltf) => {
+      const g = gltf.scene;
+      // нормировка: центр по XZ, база на y=0, масштаб по горизонтальному габариту
+      const bbox = new THREE.Box3().setFromObject(g);
+      const size = bbox.getSize(new THREE.Vector3()), c = bbox.getCenter(new THREE.Vector3());
+      g.position.set(-c.x, -bbox.min.y, -c.z);
+      const s = cfg.size / Math.max(size.x, size.z, 1e-3);
+      const root = new THREE.Group(); root.add(g);
+      root.scale.setScalar(s); root.rotation.y = cfg.yaw || 0;
+      modelCache[key] = root;
+      res();
+    }, undefined, (err) => { console.warn("МТК24: модель не загрузилась", cfg.file, err); res(); });
+  }));
+  return Promise.all(jobs).then(() => { modelsReady = true; });
+}
+
 // ----------------------------------------------------------------- three core
 const canvas = document.getElementById("gl");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -43,10 +78,14 @@ scene.fog = new THREE.Fog(COL.ink, 220, 480);
 
 const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 3000);
 
-// lighting (for future 3D models; map itself is unlit/basic)
-scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+// lighting (for 3D models; map itself is unlit/basic)
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 const key = new THREE.DirectionalLight(0xfff1d6, 1.1);
 key.position.set(-60, 120, 40); scene.add(key);
+// мягкое IBL, чтобы латунь (шпиль/купола) читалась как золото без скайбокса
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
 
 // ----------------------------------------------------------------- map plane
 let mapPlane;
@@ -105,11 +144,36 @@ const markersGroup = new THREE.Group(); scene.add(markersGroup);
 let markers = [];   // {key, sprite, force, baseState, becomes, at, pulse, baseScale}
 
 const HERO = ["smolny", "winter", "fortress", "mariinsky", "tauride"];
+function addForcePad(w, force, size) {
+  // плашка-подсветка в цвете силы под 3D-моделью (читаемость принадлежности + пульс)
+  const col = force === "vrk" ? COL.vrk : COL.graphite;
+  const mat = new THREE.MeshStandardMaterial({
+    color: col, emissive: col, emissiveIntensity: force === "vrk" ? 0.6 : 0.18,
+    roughness: 0.6, metalness: 0.0, transparent: true, opacity: 0.5,
+  });
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.6, size * 0.6, 0.4, 28), mat);
+  pad.position.set(w.x, 0.2, w.z);
+  markersGroup.add(pad);
+  return pad;
+}
 function buildMarkers(shot) {
   markersGroup.clear(); markers = [];
   for (const p of (shot.points || [])) {
     const L = loc(p.key); if (!L || L.u == null) continue;
     const force = p.force || L.force || "pg";
+    const w = uvToWorld(L.u, L.v, 0);
+
+    // ориентир с 3D-моделью → ставим модель + плашку силы (боксы для остального)
+    if (modelCache[p.key]) {
+      const model = modelCache[p.key].clone(true);
+      if (p.becomes === "red") model.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
+      model.position.set(w.x, 0, w.z);
+      markersGroup.add(model);
+      const pad = addForcePad(w, force, MODEL_CFG[p.key].size);
+      markers.push({ ...p, mesh: model, pad, force, isModel: true, redApplied: false });
+      continue;
+    }
+
     const isBridge = /_br$/.test(p.key);
     const hero = HERO.includes(p.key);
     const fw = isBridge ? 2.0 : (hero ? 3.6 : 2.6);   // след (ширина/глубина), world units
@@ -120,23 +184,33 @@ function buildMarkers(shot) {
       roughness: 0.55, metalness: 0.15,
     });
     const box = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, fw), mat);
-    const w = uvToWorld(L.u, L.v, 0);
     box.position.set(w.x, fh / 2, w.z);
     markersGroup.add(box);
     // тонкая «крыша»-кромка для читаемости
     markers.push({ ...p, mesh: box, force, baseH: fh, redApplied: false });
   }
 }
+function tintRed(obj) {
+  if (obj.material) {
+    obj.material.color.setHex(COL.redLight);
+    obj.material.emissive.setHex(COL.redLight);
+    obj.material.emissiveIntensity = 0.5;
+  } else {  // 3D-модель: подсветить меши «захваченным» красным
+    obj.traverse((o) => { if (o.isMesh) { o.material.emissive.setHex(COL.redLight); o.material.emissiveIntensity = 0.45; } });
+  }
+}
 function updateMarkers(lp, time) {
   for (const m of markers) {
     if (m.becomes === "red" && !m.redApplied && lp >= (m.at ?? 0)) {
-      m.mesh.material.color.setHex(COL.redLight);
-      m.mesh.material.emissive.setHex(COL.redLight);
-      m.mesh.material.emissiveIntensity = 0.5; m.redApplied = true;
+      tintRed(m.mesh);
+      if (m.pad) { m.pad.material.color.setHex(COL.redLight); m.pad.material.emissive.setHex(COL.redLight); m.pad.material.emissiveIntensity = 0.6; }
+      m.redApplied = true;
     }
     if (m.pulse) {
       const fast = m.pulse === "fast";
-      m.mesh.material.emissiveIntensity = 0.35 + 0.4 * Math.abs(Math.sin(time * (fast ? 7 : 3.2)));
+      const e = 0.3 + 0.6 * Math.abs(Math.sin(time * (fast ? 7 : 3.2)));
+      if (m.mesh.material) m.mesh.material.emissiveIntensity = e;             // боксы
+      else if (m.pad && !m.redApplied) m.pad.material.emissiveIntensity = e;  // плашка под моделью
     }
   }
 }
@@ -301,7 +375,7 @@ window.addEventListener("keydown", (e) => {
 });
 
 // ----------------------------------------------------------------- working screen (размер ТЗ)
-const WORK_ASPECT = 2925 / 2497;   // ≈1.171, по размеру проекции из ТЗ (размер 24)
+const WORK_ASPECT = 679 / 592;     // ≈1.147 — bbox точной формы экрана (in/размер 24.PNG)
 const TECH_H = 150;                // высота технической зоны снизу, px
 function resize() {
   const availW = window.innerWidth, availH = window.innerHeight - TECH_H;
@@ -322,5 +396,10 @@ function boot() {
   resize(); buildTicks();
   const s0 = SCN.shots[0]; setFraming(s0);
   camera.position.copy(camGoalPos); camTarget.copy(camGoalLook); camera.lookAt(camTarget);
+  // боксы-заглушки показываются сразу; когда .glb догрузятся — перестраиваем текущий кадр
+  preloadModels().then(() => {
+    const i = curIdx >= 0 ? curIdx : shotIndexAt(t);
+    if (SCN.shots[i]) buildMarkers(SCN.shots[i]);
+  });
   requestAnimationFrame(frame);
 }
