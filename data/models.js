@@ -14,12 +14,11 @@ window.MTK24_MODELS = {
   dir: "./assets/models/",
   cfg: {
     smolny:    { file: "smolny.glb",    size: 8,    yaw: 0 },
-    winter:    { file: "winter.glb",    size: 12,   yaw: 0 },
+    winter:    { file: "winter.glb",    size: 6,    yaw: 0 },
     fortress:  { file: "fortress.glb",  size: 6.5,  yaw: 0 },
     mariinsky: { file: "mariinsky.glb", size: 8,    yaw: 0 },
     tauride:   { file: "tauride.glb",   size: 11,   yaw: 0 },
-    // «Аврора» стоит на Неве между Дворцовым и Николаевским мостами — там русло
-    // идёт почти вдоль Z карты; корпус модели по умолчанию вдоль X → доворот −π/2.
-    aurora:    { file: "aurora.glb",    size: 12,   yaw: -1.57 },
+    // «Аврора»: корпус модели по умолчанию вдоль X карты (поворот на 90° от прежнего −π/2).
+    aurora:    { file: "aurora.glb",    size: 12,   yaw: 0 },
   },
 };
