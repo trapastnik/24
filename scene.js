@@ -34,17 +34,11 @@ const SCN = window.MTK24_SCENARIO || { duration: 60, shots: [] };
 function loc(key) { return LOC.points[key] || LOC.directions[key] || null; }
 
 // ----------------------------------------------------------------- 3D-модели ориентиров (GLTF)
-// лёгкие low-poly .glb (сгенерированы tools/build_models.mjs). size — желаемый
-// горизонтальный габарит в мировых единицах; yaw — доворот вокруг вертикали.
-const MODEL_CFG = {
-  smolny:    { file: "smolny.glb",    size: 9,  yaw: 0 },
-  winter:    { file: "winter.glb",    size: 17, yaw: 0 },
-  fortress:  { file: "fortress.glb",  size: 7,  yaw: 0 },
-  mariinsky: { file: "mariinsky.glb", size: 12, yaw: 0 },
-  tauride:   { file: "tauride.glb",   size: 16, yaw: 0 },
-  aurora:    { file: "aurora.glb",    size: 18, yaw: -0.35 },
-};
-const MODEL_DIR = "./assets/models/";
+// Конфиг моделей вынесен в data/models.js (window.MTK24_MODELS) — им владеет
+// сессия генерации моделей; здесь только читаем. cfg[key] = { file, size, yaw }.
+const MODELS = window.MTK24_MODELS || { dir: "./assets/models/", cfg: {} };
+const MODEL_CFG = MODELS.cfg;
+const MODEL_DIR = MODELS.dir;
 const modelCache = {};        // key → нормированный THREE.Group (шаблон для clone)
 let modelsReady = false;
 function preloadModels() {
