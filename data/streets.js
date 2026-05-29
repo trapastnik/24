@@ -14,6 +14,6 @@ window.MTK24_STREETS = [
   { name: "МИЛIОННАЯ УЛИЦА", u: 0.6146, v: 0.4697, angle: 0.4, cat: "street" },
   { name: "НЕВСКIЙ ПРОСПЕКТЪ", u: 0.5467, v: 0.5251, angle: 13.7, cat: "street" },
   { name: "СЕРДОБОЛЬСКАЯ УЛИЦА", u: 0.6337, v: 0.1168, angle: 0.1, cat: "street" },
-  { name: "Суворовскій пр.", u: 0.7692, v: 0.4558, angle: -34.0, cat: "street" },
+  { name: "Суворовскій пр.", u: 0.7692, v: 0.4558, angle: -34, cat: "street" },
   { name: "ШПАЛЕРНАЯ УЛИЦА", u: 0.7317, v: 0.447, angle: 1.2, cat: "street" },
 ];

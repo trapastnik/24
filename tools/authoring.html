@@ -34,6 +34,13 @@
     <label>режим:</label>
     <button id="mPoints" class="on">точки</button>
     <button id="mRoutes">маршруты</button>
+    <button id="mStreets">улицы</button>
+    <span id="stWrap" style="display:none">
+      <label>улица:</label>
+      <select id="selStreet"></select>
+      <button id="addStreet">＋ улица</button>
+      <span style="color:#8b969c;font-size:12px">поворот: [ ]  (Shift — крупно)</span>
+    </span>
     <span id="selWrap">
       <label>точка:</label>
       <select id="selPoint"></select>
@@ -47,7 +54,7 @@
       <button id="undoWp">⌫ точка</button>
       <button id="clrRoute">очистить</button>
     </span>
-    <button id="toggleStreets" class="on" title="показать названия улиц">улицы</button>
+    <button id="toggleStreets" class="on" title="показать/скрыть названия улиц">👁 ул.</button>
     <button id="undoBtn" title="отменить последнее действие (Ctrl+Z)">↶ отмена</button>
     <button id="resetBtn" title="вернуть позиции из файла">↺ из файла</button>
     <button id="saveBtn" title="записать в data/locations.js">💾 сохранить</button>
@@ -72,7 +79,7 @@ const MAP="../assets/map/petrograd_5000.jpg";
 const L = window.MTK24_LOCATIONS || {points:{},routes:{},directions:{}};
 const points = L.points, routes = L.routes||{}, dirs = L.directions||{};
 const STREETS = window.MTK24_STREETS || [];
-let showStreets = true;
+let showStreets = true, selStreet = null;
 const c=document.getElementById("c"), g=c.getContext("2d");
 const img=new Image(); let IW=1,IH=1, ready=false;
 img.onload=()=>{IW=img.naturalWidth;IH=img.naturalHeight;ready=true;fit();draw();};
@@ -105,24 +112,32 @@ function nearestSeg(x,y,wps){let bi=-1,bd=1e9;for(let i=0;i<wps.length-1;i++){
   const[ax,ay]=toScr(...wpXY(wps[i])),[bx,by]=toScr(...wpXY(wps[i+1]));
   const d=distSeg(x,y,ax,ay,bx,by);if(d<bd){bd=d;bi=i;}}return{i:bi,d:bd};}
 
+function streetFs(){return Math.max(12,Math.min(64,0.0055*IW*view.s));}  // крупнее при зуме
 function drawStreets(){
-  if(!showStreets) return;
-  const fs=Math.max(11,Math.min(30,0.004*IW*view.s));
+  if(!(showStreets||mode==="streets") || !STREETS.length) return;
+  const fs=streetFs();
   g.textAlign="center";g.textBaseline="middle";g.font=fs+"px Georgia, serif";
-  for(const s of STREETS){
+  STREETS.forEach((s,idx)=>{
     const[x,y]=toScr(s.u,s.v);
-    if(x<-50||x>c.width+50||y<-30||y>c.height+30) continue;
-    const w=g.measureText(s.name).width;
+    if(x<-90||x>c.width+90||y<-60||y>c.height+60){s._r=null;return;}
+    const w=g.measureText(s.name).width, pw=w+fs*0.8, ph=fs*1.25;
+    s._r={x,y,pw,ph,ang:(s.angle||0)};
+    const sel=mode==="streets"&&idx===selStreet, river=s.cat==="river";
     g.save();g.translate(x,y);g.rotate((s.angle||0)*Math.PI/180);
-    const river=s.cat==="river";
-    g.fillStyle=river?"rgba(40,90,120,.7)":"rgba(247,249,239,.82)";
-    const ph=fs*1.25, pw=w+fs*0.8;
+    g.fillStyle=river?"rgba(40,90,120,.74)":"rgba(247,249,239,.85)";
     g.fillRect(-pw/2,-ph/2,pw,ph);
-    g.strokeStyle=river?"rgba(180,210,230,.7)":"rgba(160,33,40,.55)";g.lineWidth=1;g.strokeRect(-pw/2,-ph/2,pw,ph);
+    g.lineWidth=sel?3:1;g.strokeStyle=sel?"#E2412B":(river?"rgba(180,210,230,.7)":"rgba(160,33,40,.55)");
+    g.strokeRect(-pw/2,-ph/2,pw,ph);
     g.fillStyle=river?"#cfe6f2":"#14181b";g.fillText(s.name,0,1);
     g.restore();
-  }
+  });
 }
+function hitStreet(px,py){
+  for(let i=STREETS.length-1;i>=0;i--){const r=STREETS[i]._r;if(!r)continue;
+    const a=-r.ang*Math.PI/180,dx=px-r.x,dy=py-r.y;
+    const lx=dx*Math.cos(a)-dy*Math.sin(a),ly=dx*Math.sin(a)+dy*Math.cos(a);
+    if(Math.abs(lx)<=r.pw/2+4&&Math.abs(ly)<=r.ph/2+4)return i;}
+  return -1;}
 function draw(){
   g.clearRect(0,0,c.width,c.height);
   if(ready) g.drawImage(img,view.ox,view.oy,IW*view.s,IH*view.s);
@@ -171,9 +186,12 @@ c.addEventListener("mousedown",e=>{
   if(mode==="points"){
     const k=hitPoint(x,y);
     if(k){selKey=k;syncSel();dragging={type:"pt",key:k,su:points[k].u,sv:points[k].v,moved:false,snap:snap()};draw();return;}
-  } else {
+  } else if(mode==="routes"){
     const wi=hitWp(x,y);
     if(wi>=0){const[su,sv]=wpXY(routes[selRoute][wi]);dragging={type:"wp",i:wi,su,sv,moved:false,snap:snap()};return;}
+  } else if(mode==="streets"){
+    const si=hitStreet(x,y);
+    if(si>=0){selStreet=si;syncStreet();dragging={type:"st",i:si,su:STREETS[si].u,sv:STREETS[si].v,moved:false,snap:snap()};draw();return;}
   }
   dragging={type:"pan",x,y,ox:view.ox,oy:view.oy}; c.classList.add("drag");
 });
@@ -184,6 +202,7 @@ addEventListener("mousemove",e=>{
   if(dragging.type==="pan"){view.ox=dragging.ox+(e.clientX-dragging.x);view.oy=dragging.oy+(y-(dragging.y));draw();}
   else if(dragging.type==="pt"){dragging.moved=true;const[u,v]=toUV(x,y);points[dragging.key].u=+u.toFixed(4);points[dragging.key].v=+v.toFixed(4);draw();}
   else if(dragging.type==="wp"){dragging.moved=true;const[u,v]=toUV(x,y);setWp(routes[selRoute][dragging.i],+u.toFixed(4),+v.toFixed(4));draw();}
+  else if(dragging.type==="st"){dragging.moved=true;const[u,v]=toUV(x,y);STREETS[dragging.i].u=+u.toFixed(4);STREETS[dragging.i].v=+v.toFixed(4);draw();}
 });
 let suppressClick=false;
 addEventListener("mouseup",()=>{
@@ -196,6 +215,8 @@ addEventListener("mouseup",()=>{
     } else if(dragging.type==="wp"){
       if(confirm("Сохранить новое положение точки маршрута?")){pushUndo(dragging.snap);autosave();}
       else {setWp(routes[selRoute][dragging.i],dragging.su,dragging.sv);draw();}
+    } else if(dragging.type==="st"){
+      pushUndo(dragging.snap);autosaveStreets();
     }
   }
   dragging=null;c.classList.remove("drag");
@@ -233,17 +254,41 @@ function fillSelects(){
   const sr=document.getElementById("selRoute");sr.innerHTML="";
   Object.keys(routes).forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent=k;sr.appendChild(o);});
   selRoute=selRoute||Object.keys(routes)[0]; sr.value=selRoute;
+  fillStreetSel();
 }
 document.getElementById("selPoint").onchange=e=>{selKey=e.target.value;setArm(false);
   const p=points[selKey];centerOn(p.u,p.v);draw();};
 document.getElementById("selRoute").onchange=e=>{selRoute=e.target.value;draw();};
+document.getElementById("selStreet").onchange=e=>{selStreet=+e.target.value;const s=STREETS[selStreet];if(s)centerOn(s.u,s.v);draw();};
 document.getElementById("mPoints").onclick=()=>{mode="points";setArm(false);togMode();};
 document.getElementById("mRoutes").onclick=()=>{mode="routes";setArm(false);togMode();};
+document.getElementById("mStreets").onclick=()=>{mode="streets";setArm(false);if(selStreet==null&&STREETS.length)selStreet=0;syncStreet();togMode();};
 document.getElementById("placeClick").onclick=()=>setArm(!armPlace);
+document.getElementById("addStreet").onclick=()=>{const nm=prompt("название улицы / реки:");if(!nm)return;
+  pushUndo();STREETS.push({name:nm,u:0.5,v:0.5,angle:0,cat:confirm("Это река? OK=да, Отмена=улица")?"river":"street"});
+  selStreet=STREETS.length-1;fillStreetSel();syncStreet();draw();autosaveStreets();};
+function syncStreet(){const ss=document.getElementById("selStreet");if(selStreet!=null)ss.value=selStreet;}
+function fillStreetSel(){const ss=document.getElementById("selStreet");ss.innerHTML="";
+  STREETS.forEach((s,i)=>{const o=document.createElement("option");o.value=i;o.textContent=(s.cat==="river"?"~ ":"")+s.name;ss.appendChild(o);});
+  if(selStreet!=null)ss.value=selStreet;}
+function serializeStreets(){return "window.MTK24_STREETS = [\n"+STREETS.map(s=>
+  `  { name: ${JSON.stringify(s.name)}, u: ${s.u}, v: ${s.v}, angle: ${s.angle||0}, cat: ${JSON.stringify(s.cat||"street")} },`).join("\n")+"\n];\n";}
+async function saveStreetsNow(){try{const r=await fetch("/api/save-streets",{method:"POST",headers:{"Content-Type":"text/plain"},body:serializeStreets()});if(!r.ok)throw 0;flash("улицы сохранены");}catch(e){flash("⚠ улицы не сохранены",true);}}
+let stTimer=null;function autosaveStreets(){clearTimeout(stTimer);stTimer=setTimeout(saveStreetsNow,150);}
+// поворот выбранной улицы клавишами [ ]
+addEventListener("keydown",e=>{
+  if(mode!=="streets"||selStreet==null)return;
+  if(e.key==="["||e.key==="]"){e.preventDefault();pushUndo();
+    const st=(e.shiftKey?10:2)*(e.key==="]"?1:-1);
+    STREETS[selStreet].angle=Math.round(((STREETS[selStreet].angle||0)+st)*10)/10;
+    draw();autosaveStreets();}
+});
 function togMode(){document.getElementById("mPoints").classList.toggle("on",mode==="points");
   document.getElementById("mRoutes").classList.toggle("on",mode==="routes");
+  document.getElementById("mStreets").classList.toggle("on",mode==="streets");
   document.getElementById("selWrap").style.display=mode==="points"?"":"none";
-  document.getElementById("rtWrap").style.display=mode==="routes"?"":"none";draw();}
+  document.getElementById("rtWrap").style.display=mode==="routes"?"":"none";
+  document.getElementById("stWrap").style.display=mode==="streets"?"":"none";draw();}
 document.getElementById("addPoint").onclick=()=>{const k=prompt("ключ новой точки (латиницей):");if(!k)return;
   const name=prompt("название (рус):")||k; const force=confirm("ВРК (жёлтый)? OK=да, Отмена=чёрный")?"vrk":"pg";
   pushUndo();points[k]={u:0.5,v:0.5,name,force};fillSelects();selKey=k;syncSel();setArm(true);draw();};
@@ -277,16 +322,19 @@ async function saveNow(){
 function autosave(){clearTimeout(saveTimer);saveTimer=setTimeout(saveNow,150);}  // дебаунс
 // ---- откат действий ----
 let undoStack=[];
-function snap(){return JSON.stringify({points,routes});}
+function snap(){return JSON.stringify({points,routes,
+  streets:STREETS.map(s=>({name:s.name,u:s.u,v:s.v,angle:s.angle||0,cat:s.cat||"street"}))});}
 function pushUndo(s){undoStack.push(s||snap());if(undoStack.length>80)undoStack.shift();}
 function undo(){
   if(!undoStack.length){flash("нечего отменять",true);return;}
   const st=JSON.parse(undoStack.pop());
   for(const k in points)delete points[k]; Object.assign(points,st.points);
   for(const k in routes)delete routes[k]; Object.assign(routes,st.routes);
+  if(st.streets){STREETS.length=0;st.streets.forEach(s=>STREETS.push(s));}
   if(!points[selKey])selKey=Object.keys(points)[0];
   if(!routes[selRoute])selRoute=Object.keys(routes)[0];
-  fillSelects();syncSel();draw();autosave();flash("отменено");
+  if(selStreet!=null&&!STREETS[selStreet])selStreet=STREETS.length?0:null;
+  fillSelects();syncSel();draw();autosave();autosaveStreets();flash("отменено");
 }
 document.getElementById("toggleStreets").onclick=function(){showStreets=!showStreets;this.classList.toggle("on",showStreets);draw();};
 document.getElementById("undoBtn").onclick=undo;

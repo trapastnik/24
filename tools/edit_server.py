@@ -11,7 +11,10 @@
 import http.server, os, sys, shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TARGET = os.path.join(ROOT, "data", "locations.js")
+TARGETS = {
+    "/api/save-locations": (os.path.join(ROOT, "data", "locations.js"), "MTK24_LOCATIONS"),
+    "/api/save-streets":   (os.path.join(ROOT, "data", "streets.js"),   "MTK24_STREETS"),
+}
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8125
 
 
@@ -28,25 +31,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_response(204); self._cors(); self.end_headers()
 
     def do_POST(self):
-        if self.path != "/api/save-locations":
+        tgt = TARGETS.get(self.path)
+        if not tgt:
             self.send_response(404); self._cors(); self.end_headers(); return
+        path, marker = tgt
         n = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(n).decode("utf-8")
-        # минимальная валидация, чтобы случайно не записать мусор
-        if n > 4_000_000 or "MTK24_LOCATIONS" not in body or "points" not in body:
+        if n > 4_000_000 or marker not in body:           # минимальная валидация
             self.send_response(400); self._cors(); self.end_headers()
-            self.wfile.write(b"rejected: not a valid locations.js"); return
-        if os.path.exists(TARGET):
-            shutil.copyfile(TARGET, TARGET + ".bak")   # резервная копия
-        with open(TARGET, "w", encoding="utf-8") as f:
+            self.wfile.write(b"rejected"); return
+        if os.path.exists(path):
+            shutil.copyfile(path, path + ".bak")           # резервная копия
+        with open(path, "w", encoding="utf-8") as f:
             f.write(body)
         self.send_response(200); self._cors(); self.end_headers()
         self.wfile.write(b"ok")
-        print(f"[saved] data/locations.js ({n} bytes)")
+        print(f"[saved] {os.path.relpath(path, ROOT)} ({n} bytes)")
 
 
 if __name__ == "__main__":
     os.chdir(ROOT)
     print(f"МТК-24 edit server → http://localhost:{PORT}/tools/authoring.html")
-    print(f"  POST /api/save-locations → {TARGET}")
+    for ep, (p, _) in TARGETS.items():
+        print(f"  POST {ep} → {os.path.relpath(p, ROOT)}")
     http.server.ThreadingHTTPServer(("", PORT), Handler).serve_forever()

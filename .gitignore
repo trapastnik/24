@@ -17,3 +17,4 @@ assets/map/petrograd_5000.png
 
 # runtime backup from edit_server
 data/locations.js.bak
+data/streets.js.bak
