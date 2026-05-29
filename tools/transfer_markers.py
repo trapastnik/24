@@ -10,7 +10,7 @@
 """
 import cv2, numpy as np, json
 
-M = cv2.imread('/tmp/marked_hi-1.png')
+M = cv2.imread('/tmp/marked_r24-1.png')
 C = cv2.imread('in/map_tone_gray.png')
 H = np.load('/tmp/H_marked_to_cleanDS.npy')
 sc, dsW, dsH, fullW, fullH = np.load('/tmp/clean_ds_scale.npy')
