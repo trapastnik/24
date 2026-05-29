@@ -61,7 +61,7 @@
     <span id="status"></span>
     <button id="exportBtn">экспорт JSON</button>
     <span id="uv">u — , v —</span>
-    <span id="hint">колесо — зум · тащить фон/метку — двигать · (маршруты) клик по линии — вставить промежуточную, тащить — двигать</span>
+    <span id="hint">колесо — зум · тащить фон/метку — двигать · (маршруты) клик по линии — вставить, правый клик по точке — удалить · (улицы) [ ] — поворот, правый клик — удалить</span>
   </div>
   <canvas id="c"></canvas>
 
@@ -240,6 +240,17 @@ c.addEventListener("click",e=>{
     else wps.push(via);
     draw();autosave();}
   // иначе клик по пустому месту ничего не двигает — это режим перемещения карты
+});
+// правый клик по точке маршрута — удалить её (любую, не только последнюю)
+c.addEventListener("contextmenu",e=>{
+  if(mode==="routes"&&selRoute&&routes[selRoute]){
+    const wi=hitWp(e.offsetX,e.offsetY);
+    if(wi>=0){e.preventDefault();pushUndo();routes[selRoute].splice(wi,1);draw();autosave();flash("точка удалена");return;}
+  }
+  if(mode==="streets"){
+    const si=hitStreet(e.offsetX,e.offsetY);
+    if(si>=0){e.preventDefault();pushUndo();STREETS.splice(si,1);if(selStreet>=STREETS.length)selStreet=STREETS.length-1;fillStreetSel();draw();autosaveStreets();flash("улица удалена");return;}
+  }
 });
 c.addEventListener("wheel",e=>{e.preventDefault();const x=e.offsetX,y=e.offsetY;const[u,v]=toUV(x,y);
   view.s*=e.deltaY<0?1.15:1/1.15;view.s=Math.max(0.03,Math.min(8,view.s));
