@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>МТК №24 · Ленин в октябре — 24–25 октября 1917</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="stage" id="stage" aria-label="МТК №24 — видео-проекция «24–25 октября 1917»">
+    <canvas id="gl"></canvas>
+
+    <header class="brand" aria-hidden="true">
+      <div class="kicker">МТК №24 · музей В.И. Ленина</div>
+      <h1>Ленин<br>в октябре</h1>
+      <div class="sub">Петроград · 24–25 октября 1917</div>
+    </header>
+
+    <!-- легенда сил -->
+    <div class="forces" aria-hidden="true">
+      <div class="force-row"><span class="chip chip-vrk">★</span><span>Военно-революционный комитет</span></div>
+      <div class="force-row"><span class="chip chip-pg"></span><span>Временное правительство</span></div>
+    </div>
+
+    <!-- врезка-иллюстрация -->
+    <figure class="ill" id="ill" aria-hidden="true">
+      <img id="ill-img" alt="">
+      <figcaption id="ill-cap"></figcaption>
+    </figure>
+
+    <!-- дикторский титр (нижняя треть) -->
+    <section class="narration" id="narration" aria-hidden="true">
+      <span class="date" id="n-date"></span>
+      <h2 id="n-title"></h2>
+      <p class="lede" id="n-lede"></p>
+    </section>
+
+    <!-- цитата -->
+    <aside class="quote" id="quote" aria-hidden="true">
+      <div class="mark">«</div>
+      <p id="q-text"></p>
+      <div class="cite" id="q-cite"></div>
+    </aside>
+
+    <div class="attrib" id="attrib">основа: ПЛАНЪ ПЕТРОГРАДА · слот под озвучку</div>
+
+    <!-- таймлайн событий двух суток -->
+    <footer class="transport">
+      <button class="btn-play" id="btnPlay" aria-label="пауза / воспроизведение">❚❚</button>
+      <div class="track" id="track">
+        <div class="track-line"></div>
+        <div class="track-fill" id="trackFill"></div>
+      </div>
+      <div class="clock" id="clock"><b>0:00</b> / 4:30</div>
+    </footer>
+  </main>
+
+  <script src="./data/locations.js"></script>
+  <script src="./data/scenario.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./lib/three/three.module.min.js",
+      "three/addons/": "./lib/three/addons/"
+    }
+  }
+  </script>
+  <script type="module" src="./scene.js"></script>
+</body>
+</html>

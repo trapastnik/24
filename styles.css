@@ -1,0 +1,232 @@
+/* МТК №24 «Ленин в октябре» — динамическая объёмная карта Петрограда.
+   Брендовая палитра и шрифты музея (paper / brass / signal-red / graphite). */
+
+@font-face {
+  font-family: "Nolde";
+  font-weight: 400; font-style: normal; font-display: swap;
+  src: url("./fonts/nolde/nolde.otf") format("opentype");
+}
+@font-face {
+  font-family: "20 Kopeek";
+  font-weight: 400; font-style: normal; font-display: swap;
+  src: url("./fonts/kopeek/20-kopeek-book.otf") format("opentype");
+}
+@font-face {
+  font-family: "20 Kopeek";
+  font-weight: 600; font-style: normal; font-display: swap;
+  src: url("./fonts/kopeek/20-kopeek-demibold.otf") format("opentype");
+}
+
+:root {
+  --paper:    #F7F9EF;
+  --brass:    #D2B773;
+  --red:      #A02128;
+  --graphite: #435059;
+  --window:   #9DA3A6;
+  --ink:      #161B1E;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  width: 100%; height: 100%; margin: 0; overflow: hidden;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: "Nolde", Georgia, serif;
+  -webkit-user-select: none; user-select: none;
+  cursor: default;
+}
+
+.stage {
+  position: fixed; inset: 0; isolation: isolate;
+  background: #0c1012;
+}
+
+#map, #gl {
+  position: absolute; inset: 0; z-index: 1;
+  width: 100%; height: 100%; display: block; touch-action: none;
+}
+
+/* ---------- forces legend (top-right) ---------- */
+.forces {
+  position: absolute; z-index: 5; right: clamp(22px,2.8vw,56px); top: clamp(20px,3.4vh,52px);
+  display: grid; row-gap: 0.55em; justify-items: end;
+  font-family: "20 Kopeek", monospace; font-size: clamp(11px,1.15vh,16px);
+  color: var(--paper); opacity: 0.9; pointer-events: none;
+}
+.force-row { display: flex; align-items: center; gap: 0.6em; white-space: nowrap; }
+.chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15em; height: 1.15em; border-radius: 2px; font-size: 0.8em; flex-shrink: 0;
+}
+.chip-vrk { background: var(--brass); color: var(--red); }
+.chip-pg  { background: #14181b; border: 1px solid var(--window); }
+
+/* ---------- illustration inset (lower-right) ---------- */
+.ill {
+  position: absolute; z-index: 5; right: clamp(22px,2.8vw,56px);
+  bottom: clamp(96px,13vh,150px); margin: 0; width: clamp(220px, 24vw, 420px);
+  opacity: 0; transform: translateY(12px); transition: opacity 0.6s ease, transform 0.6s ease;
+  pointer-events: none;
+}
+.ill.show { opacity: 1; transform: none; }
+.ill img {
+  display: block; width: 100%; height: auto; max-height: 42vh; object-fit: cover;
+  border: 1px solid rgba(210,183,115,0.4);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.6); filter: saturate(0.85) contrast(1.02);
+}
+.ill figcaption {
+  font-family: "20 Kopeek", monospace; font-size: clamp(10px,1.05vh,14px);
+  color: var(--brass); opacity: 0.9; margin-top: 0.5em; line-height: 1.35; text-align: right;
+}
+
+/* projector / mapping-projection feel: scanlines + warm vignette over canvas */
+.stage::after {
+  content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none;
+  background:
+    radial-gradient(ellipse 120% 90% at 50% 42%, transparent 55%, rgba(8,11,13,0.55) 100%),
+    repeating-linear-gradient(0deg, rgba(247,249,239,0.035) 0, rgba(247,249,239,0.035) 1px, transparent 1px, transparent 4px);
+  mix-blend-mode: soft-light;
+}
+
+/* ---------- top-left brand block ---------- */
+.brand {
+  position: absolute; z-index: 5; top: clamp(20px,3.4vh,52px); left: clamp(22px,2.8vw,56px);
+  pointer-events: none;
+}
+.brand .kicker {
+  font-family: "20 Kopeek", "Courier New", monospace;
+  font-size: clamp(11px,1.1vh,18px); letter-spacing: 0.26em; text-transform: uppercase;
+  color: var(--brass); opacity: 0.92; margin-bottom: 0.5em;
+}
+.brand h1 {
+  font-family: "Nolde", Georgia, serif; font-weight: 400;
+  font-size: clamp(30px,4.6vh,76px); line-height: 0.94; letter-spacing: -0.01em;
+  margin: 0; color: var(--paper); text-shadow: 0 4px 22px rgba(0,0,0,0.6);
+}
+.brand .sub {
+  font-family: "20 Kopeek", monospace; font-size: clamp(11px,1.15vh,16px);
+  letter-spacing: 0.04em; color: var(--paper); opacity: 0.6; margin-top: 0.7em;
+}
+
+/* ---------- lower-third narration ---------- */
+.narration {
+  position: absolute; z-index: 5; left: clamp(22px,2.8vw,56px);
+  bottom: clamp(86px,12vh,140px); max-width: min(52%, 760px);
+  pointer-events: none;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.narration.swap { opacity: 0; transform: translateY(14px); }
+.narration .date {
+  font-family: "20 Kopeek", monospace; font-size: clamp(13px,1.5vh,24px);
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--brass);
+  margin-bottom: 0.45em;
+  display: inline-block; border-bottom: 1px solid rgba(210,183,115,0.4); padding-bottom: 0.3em;
+}
+.narration h2 {
+  font-family: "Nolde", Georgia, serif; font-weight: 400;
+  font-size: clamp(26px,4.4vh,72px); line-height: 0.98; letter-spacing: -0.005em;
+  margin: 0.25em 0 0.4em; color: var(--paper); text-shadow: 0 3px 18px rgba(0,0,0,0.65);
+}
+.narration .lede {
+  font-family: "20 Kopeek", monospace; font-size: clamp(13px,1.55vh,22px);
+  line-height: 1.5; color: var(--paper); opacity: 0.86; max-width: 34em;
+}
+
+/* ---------- quote card (right) ---------- */
+.quote {
+  position: absolute; z-index: 5; right: clamp(22px,2.8vw,56px);
+  top: 50%; transform: translateY(-50%); max-width: min(34%, 460px);
+  padding: clamp(18px,2vw,30px) clamp(20px,2.2vw,34px);
+  background: linear-gradient(160deg, rgba(67,80,89,0.42), rgba(12,16,18,0.66));
+  border: 1px solid rgba(210,183,115,0.34); border-left: 3px solid var(--red);
+  backdrop-filter: blur(3px); pointer-events: none;
+  transition: opacity 0.5s ease, transform 0.5s ease; opacity: 0;
+}
+.quote.show { opacity: 1; }
+.quote .mark { font-family: "Nolde", serif; color: var(--red); font-size: 3.4em; line-height: 0.4; opacity: 0.7; }
+.quote p {
+  font-family: "Nolde", Georgia, serif; font-size: clamp(16px,1.9vh,28px);
+  line-height: 1.32; color: var(--paper); margin: 0.2em 0 0.9em; font-style: italic;
+}
+.quote .cite {
+  font-family: "20 Kopeek", monospace; font-size: clamp(10px,1.05vh,14px);
+  letter-spacing: 0.04em; color: var(--brass); opacity: 0.85; line-height: 1.4;
+}
+
+/* ---------- legend (top-right) ---------- */
+.legend {
+  position: absolute; z-index: 5; right: clamp(22px,2.8vw,56px); top: clamp(20px,3.4vh,52px);
+  display: grid; row-gap: 0.5em; justify-items: end;
+  font-family: "20 Kopeek", monospace; font-size: clamp(11px,1.15vh,16px);
+  color: var(--paper); opacity: 0.82; pointer-events: none;
+}
+.legend-row { display: flex; align-items: center; gap: 0.55em; white-space: nowrap; }
+.legend .dot { width: 0.82em; height: 0.82em; border-radius: 50%; flex-shrink: 0; }
+.dot-hq     { background: var(--brass); }
+.dot-target { background: var(--red); }
+.dot-object { background: var(--paper); }
+.dot-signal { background: var(--red); box-shadow: 0 0 0 3px rgba(160,33,40,0.35); }
+.dot-under  { background: var(--graphite); border: 1px solid var(--window); }
+
+/* ---------- bottom timeline / transport ---------- */
+.transport {
+  position: absolute; z-index: 6; left: 0; right: 0; bottom: 0;
+  height: clamp(64px,9vh,104px);
+  display: flex; align-items: center; gap: clamp(14px,1.6vw,28px);
+  padding: 0 clamp(22px,2.8vw,56px);
+  background: linear-gradient(0deg, rgba(8,11,13,0.92), rgba(8,11,13,0.0));
+}
+.btn-play {
+  flex-shrink: 0; width: clamp(38px,3.6vh,52px); height: clamp(38px,3.6vh,52px);
+  border-radius: 50%; border: 1px solid rgba(210,183,115,0.5);
+  background: rgba(247,249,239,0.06); color: var(--paper);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  font-size: clamp(14px,1.5vh,20px); transition: background 0.2s, border-color 0.2s;
+}
+.btn-play:hover { background: rgba(210,183,115,0.18); border-color: var(--brass); }
+
+.track { position: relative; flex: 1; height: 100%; cursor: pointer; }
+.track-line {
+  position: absolute; left: 0; right: 0; top: 50%; height: 2px;
+  background: rgba(157,163,166,0.3); transform: translateY(-50%);
+}
+.track-fill {
+  position: absolute; left: 0; top: 50%; height: 2px; width: 0;
+  background: var(--red); transform: translateY(-50%); box-shadow: 0 0 10px rgba(160,33,40,0.7);
+}
+.tick {
+  position: absolute; top: 50%; transform: translate(-50%,-50%);
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--graphite); border: 1px solid var(--window);
+  transition: background 0.3s, transform 0.3s, box-shadow 0.3s;
+}
+.tick.done { background: var(--brass); border-color: var(--brass); }
+.tick.active {
+  background: var(--red); border-color: var(--red); width: 13px; height: 13px;
+  box-shadow: 0 0 0 4px rgba(160,33,40,0.28);
+}
+.tick .lbl {
+  position: absolute; left: 50%; bottom: 150%; transform: translateX(-50%);
+  font-family: "20 Kopeek", monospace; font-size: clamp(9px,0.95vh,12px);
+  letter-spacing: 0.05em; color: var(--paper); opacity: 0; white-space: nowrap;
+  transition: opacity 0.25s; pointer-events: none;
+}
+.tick.active .lbl, .track:hover .tick:hover .lbl { opacity: 0.92; }
+.clock {
+  flex-shrink: 0; font-family: "20 Kopeek", monospace; font-size: clamp(12px,1.3vh,18px);
+  letter-spacing: 0.08em; color: var(--paper); opacity: 0.8; min-width: 7.5em; text-align: right;
+}
+.clock b { color: var(--brass); font-weight: 600; }
+
+.attrib {
+  position: absolute; z-index: 5; left: clamp(22px,2.8vw,56px);
+  bottom: clamp(66px,8.6vh,104px);
+  font-family: "20 Kopeek", monospace; font-size: clamp(9px,0.9vh,12px);
+  color: var(--window); opacity: 0.5; pointer-events: none; letter-spacing: 0.04em;
+}
+
+@media (max-width: 900px) {
+  .quote { position: static; transform: none; max-width: none; display: none; }
+  .narration { max-width: 86%; }
+}

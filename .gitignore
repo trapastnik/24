@@ -1,0 +1,16 @@
+# --- OS / scratch ---
+.DS_Store
+**/.DS_Store
+*.output
+node_modules/
+
+# --- Heavy SOURCE media (kept locally; not needed to run the build) ---
+# 287 MB PSD and 115 MB PDF exceed GitHub's 100 MB limit; the 64 MB clean PNG
+# is the source for the committed web texture. Regeneration assets stay local.
+in/map_tone_gray.png
+in/Карты и Иллюстрации/
+in/Кадр9_интерьер Зимнего дв 17г/
+*.psd
+
+# --- Large derived texture (the 6.9 MB .jpg is committed instead) ---
+assets/map/petrograd_5000.png

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>МТК №24 · Ленин в октябре — динамическая объёмная карта Петрограда</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="stage" aria-label="МТК №24 — динамическая объёмная карта Петрограда, октябрь 1917">
+    <canvas id="map" aria-hidden="true"></canvas>
+
+    <header class="brand" aria-hidden="true">
+      <div class="kicker">МТК №24 · музей В.И. Ленина</div>
+      <h1>Ленин<br>в октябре</h1>
+      <div class="sub">Петроград · 1917 · вооружённое восстание</div>
+    </header>
+
+    <div class="legend" aria-hidden="true">
+      <div class="legend-row"><span>штаб восстания</span><span class="dot dot-hq"></span></div>
+      <div class="legend-row"><span>цель — власть</span><span class="dot dot-target"></span></div>
+      <div class="legend-row"><span>захват объекта</span><span class="dot dot-object"></span></div>
+      <div class="legend-row"><span>сигнал</span><span class="dot dot-signal"></span></div>
+      <div class="legend-row"><span>подполье</span><span class="dot dot-under"></span></div>
+    </div>
+
+    <section class="narration" id="narration" aria-hidden="true">
+      <span class="date" id="n-date">Петроград · октябрь 1917</span>
+      <h2 id="n-title">Ленин в октябре</h2>
+      <p class="lede" id="n-lede"></p>
+    </section>
+
+    <aside class="quote" id="quote" aria-hidden="true">
+      <div class="mark">«</div>
+      <p id="q-text"></p>
+      <div class="cite" id="q-cite"></div>
+    </aside>
+
+    <div class="attrib" id="attrib">геоданные © OpenStreetMap (ODbL)</div>
+
+    <footer class="transport">
+      <button class="btn-play" id="btnPlay" aria-label="пауза / воспроизведение">❚❚</button>
+      <div class="track" id="track">
+        <div class="track-line"></div>
+        <div class="track-fill" id="trackFill"></div>
+        <!-- ticks injected by JS -->
+      </div>
+      <div class="clock" id="clock"><b>0:00</b> / 0:00</div>
+    </footer>
+  </main>
+
+  <script src="./data/petrograd_osm.js"></script>
+  <script src="./data/timeline.js"></script>
+  <script src="./map24.js"></script>
+</body>
+</html>
