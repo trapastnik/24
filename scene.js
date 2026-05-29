@@ -104,31 +104,40 @@ function markerTex(force, state) {
 const markersGroup = new THREE.Group(); scene.add(markersGroup);
 let markers = [];   // {key, sprite, force, baseState, becomes, at, pulse, baseScale}
 
+const HERO = ["smolny", "winter", "fortress", "mariinsky", "tauride"];
 function buildMarkers(shot) {
   markersGroup.clear(); markers = [];
   for (const p of (shot.points || [])) {
-    const L = loc(p.key); if (!L) continue;
+    const L = loc(p.key); if (!L || L.u == null) continue;
     const force = p.force || L.force || "pg";
-    const m = new THREE.SpriteMaterial({ map: markerTex(force, null), transparent: true, depthTest: false });
-    const sp = new THREE.Sprite(m);
-    const base = (p.pulse || force === "vrk") ? 7.5 : 6;
-    sp.scale.set(base, base, 1);
-    sp.position.copy(uvToWorld(L.u, L.v, 0.4));
-    sp.renderOrder = 10;
-    markersGroup.add(sp);
-    markers.push({ ...p, sprite: sp, force, baseScale: base, redApplied: false });
+    const isBridge = /_br$/.test(p.key);
+    const hero = HERO.includes(p.key);
+    const fw = isBridge ? 2.0 : (hero ? 3.6 : 2.6);   // след (ширина/глубина), world units
+    const fh = isBridge ? 1.2 : (hero ? 7.0 : 4.2);   // высота объёма
+    const col = force === "vrk" ? COL.vrk : COL.pg;
+    const mat = new THREE.MeshStandardMaterial({
+      color: col, emissive: col, emissiveIntensity: force === "vrk" ? 0.35 : 0.06,
+      roughness: 0.55, metalness: 0.15,
+    });
+    const box = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, fw), mat);
+    const w = uvToWorld(L.u, L.v, 0);
+    box.position.set(w.x, fh / 2, w.z);
+    markersGroup.add(box);
+    // тонкая «крыша»-кромка для читаемости
+    markers.push({ ...p, mesh: box, force, baseH: fh, redApplied: false });
   }
 }
 function updateMarkers(lp, time) {
   for (const m of markers) {
-    // state change: becomes red at fraction `at`
     if (m.becomes === "red" && !m.redApplied && lp >= (m.at ?? 0)) {
-      m.sprite.material.map = TEX_RED; m.sprite.material.needsUpdate = true; m.redApplied = true;
+      m.mesh.material.color.setHex(COL.redLight);
+      m.mesh.material.emissive.setHex(COL.redLight);
+      m.mesh.material.emissiveIntensity = 0.5; m.redApplied = true;
     }
-    const fast = m.pulse === "fast";
-    const pulse = (m.pulse) ? 1 + (fast ? 0.28 : 0.16) * Math.sin(time * (fast ? 7 : 3.4)) : 1;
-    const s = m.baseScale * pulse;
-    m.sprite.scale.set(s, s, 1);
+    if (m.pulse) {
+      const fast = m.pulse === "fast";
+      m.mesh.material.emissiveIntensity = 0.35 + 0.4 * Math.abs(Math.sin(time * (fast ? 7 : 3.2)));
+    }
   }
 }
 
@@ -199,14 +208,26 @@ const hud = {
   quote: el("quote"), qtext: el("q-text"), qcite: el("q-cite"),
   ill: el("ill"), illImg: el("ill-img"), illCap: el("ill-cap"),
   fill: el("trackFill"), clock: el("clock"), track: el("track"), play: el("btnPlay"),
+  evTime: el("ev-time"), evDate: el("ev-date"), voFull: el("vo-full"),
 };
 function fmt(s) { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+// ВРЕМЯ СОБЫТИЯ: минуты от 24 окт 00:00 → дата/время
+const pad2 = (n) => String(n).padStart(2, "0");
+function storyDT(m) {
+  m = Math.floor(m);
+  const day = Math.floor(m / 1440), mm = ((m % 1440) + 1440) % 1440;
+  return { time: pad2(Math.floor(mm / 60)) + ":" + pad2(mm % 60),
+           date: (24 + day) + " октября 1917", short: (24 + day) + " окт" };
+}
 
 let ticks = [];
 function buildTicks() {
   SCN.shots.forEach((s) => {
     const d = document.createElement("div"); d.className = "tick";
     d.style.left = (s.t0 / SCN.duration * 100) + "%";
+    const lbl = document.createElement("span"); lbl.className = "lbl";
+    lbl.textContent = (s.s0 != null) ? storyDT(s.s0).short + " · " + storyDT(s.s0).time : "";
+    d.appendChild(lbl);
     hud.track.appendChild(d); ticks.push(d);
   });
 }
@@ -226,6 +247,7 @@ function applyShot(i) {
     hud.illImg.onerror = () => { hud.illImg.onerror = null; hud.illImg.src = `./assets/ill/${s.illustration}.gif`; };
     hud.illCap.textContent = s.illCaption || ""; hud.ill.classList.add("show");
   } else hud.ill.classList.remove("show");
+  hud.voFull.textContent = s.voFull || s.narration || "";   // полный диктор-текст (тех. зона)
   ticks.forEach((tk, k) => { tk.classList.toggle("active", k === i); tk.classList.toggle("done", k < i); });
   setFraming(s);
   buildMarkers(s); buildRoutes(s);
@@ -252,8 +274,14 @@ function frame(now) {
   updateMarkers(lp, animT);
   updateRoutes(lp);
 
+  // часы/календарь по ВРЕМЕНИ СОБЫТИЯ (а не по минутам видео)
+  if (s.s0 != null && s.s1 != null) {
+    const sm = s.s0 + (s.s1 - s.s0) * lp, dt = storyDT(sm);
+    hud.evTime.textContent = dt.time;
+    hud.evDate.textContent = dt.date;
+    hud.clock.innerHTML = "<b>" + dt.short + " · " + dt.time + "</b>";
+  }
   hud.fill.style.width = (t / SCN.duration * 100) + "%";
-  hud.clock.innerHTML = "<b>" + fmt(t) + "</b> / " + fmt(SCN.duration);
 
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
@@ -272,11 +300,20 @@ window.addEventListener("keydown", (e) => {
   else if (e.code === "ArrowLeft") { const i = Math.max(0, shotIndexAt(t) - 1); t = SCN.shots[i].t0; curIdx = -1; }
 });
 
-// ----------------------------------------------------------------- resize
+// ----------------------------------------------------------------- working screen (размер ТЗ)
+const WORK_ASPECT = 2925 / 2497;   // ≈1.171, по размеру проекции из ТЗ (размер 24)
+const TECH_H = 150;                // высота технической зоны снизу, px
 function resize() {
-  const w = window.innerWidth, h = window.innerHeight;
-  renderer.setSize(w, h, false);
-  camera.aspect = w / h; camera.updateProjectionMatrix();
+  const availW = window.innerWidth, availH = window.innerHeight - TECH_H;
+  const wH = Math.min(availH, availW / WORK_ASPECT);
+  const wW = wH * WORK_ASPECT;
+  const work = document.getElementById("work");
+  work.style.width = wW + "px"; work.style.height = wH + "px";
+  work.style.left = ((availW - wW) / 2) + "px";
+  work.style.top = Math.max(0, (availH - wH) / 2) + "px";
+  document.documentElement.style.setProperty("--techH", TECH_H + "px");
+  renderer.setSize(wW, wH, false);
+  camera.aspect = wW / wH; camera.updateProjectionMatrix();
 }
 window.addEventListener("resize", resize);
 

@@ -38,13 +38,60 @@ html, body {
 }
 
 .stage {
-  position: fixed; inset: 0; isolation: isolate;
+  position: fixed; inset: 0;
+  background: #050708;
+}
+
+/* РАБОЧИЙ ЭКРАН — размер/положение задаёт JS (аспект ТЗ ≈ 2925×2497) */
+.work {
+  position: absolute; isolation: isolate; overflow: hidden;
   background: #0c1012;
+  box-shadow: 0 0 0 1px rgba(210,183,115,0.25), 0 24px 80px rgba(0,0,0,0.7);
+}
+.work::after {            /* проекторная фактура только на рабочем экране */
+  content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none;
+  background:
+    radial-gradient(ellipse 120% 90% at 50% 42%, transparent 55%, rgba(8,11,13,0.55) 100%),
+    repeating-linear-gradient(0deg, rgba(247,249,239,0.035) 0, rgba(247,249,239,0.035) 1px, transparent 1px, transparent 4px);
+  mix-blend-mode: soft-light;
 }
 
 #map, #gl {
   position: absolute; inset: 0; z-index: 1;
   width: 100%; height: 100%; display: block; touch-action: none;
+}
+
+/* ТЕХНИЧЕСКАЯ ЗОНА — вне рабочего экрана (полный диктор-текст + таймлайн) */
+.tech {
+  position: absolute; left: 0; right: 0; bottom: 0; height: var(--techH, 150px);
+  z-index: 7; background: #060809; border-top: 1px solid #1c2329;
+  display: flex; flex-direction: column;
+  padding: 8px clamp(16px,2vw,40px) 6px;
+}
+.tech-vo { flex: 1; overflow: hidden; }
+.tech-label {
+  font-family: "20 Kopeek", monospace; font-size: 10px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--window); opacity: 0.6;
+}
+#vo-full {
+  margin: 0.3em 0 0; font-family: "20 Kopeek", monospace;
+  font-size: clamp(12px,1.5vh,17px); line-height: 1.4; color: var(--paper); opacity: 0.92;
+  max-width: 100%;
+}
+
+/* большие часы + календарь (время события) */
+.clockbox {
+  position: absolute; z-index: 6; top: clamp(16px,2.6vh,40px); left: 50%; transform: translateX(-50%);
+  text-align: center; pointer-events: none;
+}
+.clockbox .ev-date {
+  font-family: "20 Kopeek", monospace; font-size: clamp(12px,1.5vh,22px);
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--brass); opacity: 0.95;
+}
+.clockbox .ev-time {
+  font-family: "Nolde", Georgia, serif; font-size: clamp(34px,6.5vh,96px); line-height: 0.95;
+  color: var(--paper); text-shadow: 0 3px 20px rgba(0,0,0,0.7);
+  font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
 }
 
 /* ---------- forces legend (top-right) ---------- */
@@ -80,14 +127,8 @@ html, body {
   color: var(--brass); opacity: 0.9; margin-top: 0.5em; line-height: 1.35; text-align: right;
 }
 
-/* projector / mapping-projection feel: scanlines + warm vignette over canvas */
-.stage::after {
-  content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none;
-  background:
-    radial-gradient(ellipse 120% 90% at 50% 42%, transparent 55%, rgba(8,11,13,0.55) 100%),
-    repeating-linear-gradient(0deg, rgba(247,249,239,0.035) 0, rgba(247,249,239,0.035) 1px, transparent 1px, transparent 4px);
-  mix-blend-mode: soft-light;
-}
+/* проекторная фактура перенесена на .work::after (только рабочий экран) */
+.stage::after { content: none; }
 
 /* ---------- top-left brand block ---------- */
 .brand {
@@ -171,14 +212,11 @@ html, body {
 
 /* ---------- bottom timeline / transport ---------- */
 .transport {
-  position: absolute; z-index: 6; left: 0; right: 0; bottom: 0;
-  height: clamp(64px,9vh,104px);
-  display: flex; align-items: center; gap: clamp(14px,1.6vw,28px);
-  padding: 0 clamp(22px,2.8vw,56px);
-  background: linear-gradient(0deg, rgba(8,11,13,0.92), rgba(8,11,13,0.0));
+  position: relative; flex-shrink: 0; height: 46px;
+  display: flex; align-items: center; gap: 18px;
 }
 .btn-play {
-  flex-shrink: 0; width: clamp(38px,3.6vh,52px); height: clamp(38px,3.6vh,52px);
+  flex-shrink: 0; width: 34px; height: 34px;
   border-radius: 50%; border: 1px solid rgba(210,183,115,0.5);
   background: rgba(247,249,239,0.06); color: var(--paper);
   display: flex; align-items: center; justify-content: center; cursor: pointer;
