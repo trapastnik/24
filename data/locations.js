@@ -1,8 +1,5 @@
-/* АВТОГЕНЕРАЦИЯ tools/place_from_pdf.py — позиции из ВЕКТОРНОГО PDF
-   (16 пинов по остриям + подписи мостов; прочее — гео-гомография).
-   Нормированные [u,v]. Правится вручную в tools/authoring.html. */
 window.MTK24_LOCATIONS = {
-  fromPdf: true,
+  georef: true,
   points: {
     smolny: { u: 0.8326, v: 0.4566, name: "Смольный", force: "vrk" },
     winter: { u: 0.4855, v: 0.4982, name: "Зимний дворец", force: "pg" },
@@ -15,22 +12,22 @@ window.MTK24_LOCATIONS = {
     barracks_litovsky: { u: 0.696, v: 0.4563, name: "Казармы Литовского полка", force: "vrk" },
     dvortsovy_br: { u: 0.3812, v: 0.48, name: "Дворцовый мост", force: "pg" },
     troitsky_br: { u: 0.4663, v: 0.4386, name: "Троицкий мост", force: "pg" },
-    liteyny_br: { u: 0.5717, v: 0.3973, name: "Литейный мост", force: "pg" },
-    nikolaevsky_br: { u: 0.4066, v: 0.5556, name: "Николаевский мост", force: "pg" },
-    grenadersky_br: { u: 0.5473, v: 0.3093, name: "Гренадерский мост", force: "vrk" },
-    sampsonievsky_br: { u: 0.5661, v: 0.3618, name: "Сампсониевский мост", force: "vrk" },
+    liteyny_br: { u: 0.6332, v: 0.4167, name: "Литейный мост", force: "pg" },
+    nikolaevsky_br: { u: 0.382, v: 0.5363, name: "Николаевский мост", force: "pg" },
+    grenadersky_br: { u: 0.5719, v: 0.3107, name: "Гренадерский мост", force: "vrk" },
+    sampsonievsky_br: { u: 0.5822, v: 0.3746, name: "Сампсониевский мост", force: "vrk" },
     telegraph_central: { u: 0.4197, v: 0.5592, name: "Центральный телеграф", force: "pg" },
     telegraph_agency: { u: 0.4482, v: 0.5638, name: "Петроградское телеграфное агентство", force: "pg" },
     nik_station: { u: 0.7043, v: 0.578, name: "Николаевский вокзал", force: "pg" },
     balt_station: { u: 0.4279, v: 0.7276, name: "Балтийский вокзал", force: "pg" },
     warsaw_station: { u: 0.4505, v: 0.7276, name: "Варшавский вокзал", force: "pg" },
-    finland_station: { u: 0.6619, v: 0.3851, name: "Финляндский вокзал", force: "pg" },
+    finland_station: { u: 0.661, v: 0.3813, name: "Финляндский вокзал", force: "pg" },
     post_main: { u: 0.4356, v: 0.5471, name: "Главпочтамт", force: "pg" },
     power_station: { u: 0.617, v: 0.5972, name: "Центральная электростанция", force: "pg" },
     gosbank: { u: 0.5379, v: 0.5859, name: "Государственный банк", force: "pg" },
     telephone_central: { u: 0.4925, v: 0.5448, name: "Центральная телефонная станция", force: "pg" },
     fofanova: { u: 0.5424, v: 0.1214, name: "Кв. М.В. Фофановой", force: "vrk" },
-    aurora: { u: 0.4098, v: 0.5521, name: "Крейсер «Аврора»", force: "vrk" },
+    aurora: { u: 0.4072, v: 0.5232, name: "Крейсер «Аврора»", force: "vrk" },
     tsarskoselsky: { u: 0.5594, v: 0.652, name: "Царскосельский вокзал", force: "pg" },
     primorsky: { u: 0.3917, v: 0.1932, name: "Приморский вокзал", force: "pg" },
   },
@@ -39,8 +36,8 @@ window.MTK24_LOCATIONS = {
     helsingfors_dir: { u: 0.3795, v: 0.1496 },
   },
   routes: {
-    lenin_route: [[0.568, 0.1269], [0.5675, 0.1887], [0.5868, 0.2681], [0.6138, 0.371], [0.6166, 0.3976], [0.6961, 0.4151], [0.7802, 0.4158], [0.8756, 0.4136]],
-    litovsky_to_trud: [[0.696, 0.4563], [0.76, 0.4386], [0.8115, 0.4121]],
-    winter_to_fortress: [[0.4757, 0.4996], [0.4787, 0.4641], [0.4784, 0.433]],
+    lenin_route: [[0.568,0.1269],[0.5675,0.1887],[0.5868,0.2681],[0.6138,0.371],[0.6166,0.3976],[0.6961,0.4151],[0.7802,0.4158],[0.8756,0.4136],[0.4961,0.4781],[0.5385,0.4711],[0.6296,0.4278]],
+    litovsky_to_trud: [[0.696,0.4563],[0.76,0.4386],[0.8115,0.4121]],
+    winter_to_fortress: [[0.4757,0.4996],[0.4787,0.4641],[0.4784,0.433]],
   },
 };

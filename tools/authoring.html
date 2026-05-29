@@ -47,6 +47,7 @@
       <button id="undoWp">⌫ точка</button>
       <button id="clrRoute">очистить</button>
     </span>
+    <button id="undoBtn" title="отменить последнее действие (Ctrl+Z)">↶ отмена</button>
     <button id="resetBtn" title="вернуть позиции из файла">↺ из файла</button>
     <button id="saveBtn" title="записать в data/locations.js">💾 сохранить</button>
     <span id="status"></span>
@@ -124,10 +125,10 @@ c.addEventListener("mousedown",e=>{
   const x=e.offsetX,y=e.offsetY;
   if(mode==="points"){
     const k=hitPoint(x,y);
-    if(k){selKey=k;syncSel();dragging={type:"pt",key:k,su:points[k].u,sv:points[k].v,moved:false};draw();return;}
+    if(k){selKey=k;syncSel();dragging={type:"pt",key:k,su:points[k].u,sv:points[k].v,moved:false,snap:snap()};draw();return;}
   } else {
     const wi=hitWp(x,y);
-    if(wi>=0){dragging={type:"wp",i:wi,su:routes[selRoute][wi][0],sv:routes[selRoute][wi][1],moved:false};return;}
+    if(wi>=0){dragging={type:"wp",i:wi,su:routes[selRoute][wi][0],sv:routes[selRoute][wi][1],moved:false,snap:snap()};return;}
   }
   dragging={type:"pan",x,y,ox:view.ox,oy:view.oy}; c.classList.add("drag");
 });
@@ -145,10 +146,10 @@ addEventListener("mouseup",()=>{
     suppressClick=true;                 // не давать click ещё раз двигать
     if(dragging.type==="pt"){
       const k=dragging.key;
-      if(confirm(`Сохранить новое положение «${points[k].name||k}»?`)) autosave();
+      if(confirm(`Сохранить новое положение «${points[k].name||k}»?`)){pushUndo(dragging.snap);autosave();}
       else {points[k].u=dragging.su;points[k].v=dragging.sv;draw();}
     } else if(dragging.type==="wp"){
-      if(confirm("Сохранить новое положение точки маршрута?")) autosave();
+      if(confirm("Сохранить новое положение точки маршрута?")){pushUndo(dragging.snap);autosave();}
       else {routes[selRoute][dragging.i]=[dragging.su,dragging.sv];draw();}
     }
   }
@@ -161,13 +162,13 @@ c.addEventListener("click",e=>{
   const x=e.offsetX,y=e.offsetY,[u,v]=toUV(x,y);
   // ставим точку кликом ТОЛЬКО когда явно «вооружены» (кнопка/новая точка) — разово
   if(mode==="points"&&armPlace&&selKey&&!hitPoint(x,y)){
-    const p=points[selKey],ou=p.u,ov=p.v;
+    const p=points[selKey],ou=p.u,ov=p.v,s=snap();
     p.u=+u.toFixed(4);p.v=+v.toFixed(4);draw();
-    if(confirm(`Поставить «${p.name||selKey}» сюда?`)) autosave();
+    if(confirm(`Поставить «${p.name||selKey}» сюда?`)){pushUndo(s);autosave();}
     else {p.u=ou;p.v=ov;draw();}
     setArm(false);                       // после постановки — обычный режим (пан карты)
   }
-  else if(mode==="routes"&&selRoute){if(hitWp(x,y)<0){routes[selRoute].push([+u.toFixed(4),+v.toFixed(4)]);draw();autosave();}}
+  else if(mode==="routes"&&selRoute){if(hitWp(x,y)<0){pushUndo();routes[selRoute].push([+u.toFixed(4),+v.toFixed(4)]);draw();autosave();}}
   // иначе клик по пустому месту ничего не двигает — это режим перемещения карты
 });
 c.addEventListener("wheel",e=>{e.preventDefault();const x=e.offsetX,y=e.offsetY;const[u,v]=toUV(x,y);
@@ -196,10 +197,10 @@ function togMode(){document.getElementById("mPoints").classList.toggle("on",mode
   document.getElementById("rtWrap").style.display=mode==="routes"?"":"none";draw();}
 document.getElementById("addPoint").onclick=()=>{const k=prompt("ключ новой точки (латиницей):");if(!k)return;
   const name=prompt("название (рус):")||k; const force=confirm("ВРК (жёлтый)? OK=да, Отмена=чёрный")?"vrk":"pg";
-  points[k]={u:0.5,v:0.5,name,force};fillSelects();selKey=k;syncSel();setArm(true);draw();};
-document.getElementById("newRoute").onclick=()=>{const k=prompt("ключ маршрута:");if(!k)return;routes[k]=[];fillSelects();selRoute=k;document.getElementById("selRoute").value=k;draw();};
-document.getElementById("undoWp").onclick=()=>{if(routes[selRoute])routes[selRoute].pop();draw();autosave();};
-document.getElementById("clrRoute").onclick=()=>{if(routes[selRoute])routes[selRoute]=[];draw();autosave();};
+  pushUndo();points[k]={u:0.5,v:0.5,name,force};fillSelects();selKey=k;syncSel();setArm(true);draw();};
+document.getElementById("newRoute").onclick=()=>{const k=prompt("ключ маршрута:");if(!k)return;pushUndo();routes[k]=[];fillSelects();selRoute=k;document.getElementById("selRoute").value=k;draw();};
+document.getElementById("undoWp").onclick=()=>{if(routes[selRoute]&&routes[selRoute].length){pushUndo();routes[selRoute].pop();draw();autosave();}};
+document.getElementById("clrRoute").onclick=()=>{if(routes[selRoute]&&routes[selRoute].length){pushUndo();routes[selRoute]=[];draw();autosave();}};
 function centerOn(u,v){const[x,y]=[c.width/2,c.height/2];view.ox=x-u*IW*view.s;view.oy=y-v*IH*view.s;}
 
 // ---- export ----
@@ -225,6 +226,21 @@ async function saveNow(){
     flash("⚠ не сохранено — нет сервера",true);}
 }
 function autosave(){clearTimeout(saveTimer);saveTimer=setTimeout(saveNow,150);}  // дебаунс
+// ---- откат действий ----
+let undoStack=[];
+function snap(){return JSON.stringify({points,routes});}
+function pushUndo(s){undoStack.push(s||snap());if(undoStack.length>80)undoStack.shift();}
+function undo(){
+  if(!undoStack.length){flash("нечего отменять",true);return;}
+  const st=JSON.parse(undoStack.pop());
+  for(const k in points)delete points[k]; Object.assign(points,st.points);
+  for(const k in routes)delete routes[k]; Object.assign(routes,st.routes);
+  if(!points[selKey])selKey=Object.keys(points)[0];
+  if(!routes[selRoute])selRoute=Object.keys(routes)[0];
+  fillSelects();syncSel();draw();autosave();flash("отменено");
+}
+document.getElementById("undoBtn").onclick=undo;
+addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"){e.preventDefault();undo();}});
 document.getElementById("saveBtn").onclick=saveNow;
 document.getElementById("resetBtn").onclick=()=>{if(confirm("Вернуть все позиции из файла (отменить несохранённые сдвиги)?"))location.reload();};
 document.getElementById("exportBtn").onclick=()=>{document.getElementById("out").value=serialize();document.getElementById("modal").classList.add("show");};
