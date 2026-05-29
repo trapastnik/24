@@ -45,6 +45,7 @@
       <button id="undoWp">⌫ точка</button>
       <button id="clrRoute">очистить</button>
     </span>
+    <button id="resetBtn" title="вернуть позиции из файла">↺ из файла</button>
     <button id="exportBtn">экспорт JSON</button>
     <span id="uv">u — , v —</span>
     <span id="hint">колесо — зум · тащить фон — двигать · тащить метку — двигать · клик по карте — поставить выбранную</span>
@@ -78,44 +79,49 @@ function fit(){const s=Math.min((innerWidth)/IW,(innerHeight-46)/IH)*0.96;
   view.s=s;view.ox=(innerWidth-IW*s)/2;view.oy=((innerHeight-46)-IH*s)/2;}
 function toScr(u,v){return [u*IW*view.s+view.ox, v*IH*view.s+view.oy];}
 function toUV(x,y){return [ (x-view.ox)/(IW*view.s), (y-view.oy)/(IH*view.s) ];}
+// размер метки растёт с зумом (не превращается в точку), с разумным потолком
+function markerR(){return Math.max(8, Math.min(38, 0.0045*IW*view.s));}
+function wpR(){return Math.max(4, Math.min(13, 0.0026*IW*view.s));}
 
 function draw(){
   g.clearRect(0,0,c.width,c.height);
   if(ready) g.drawImage(img,view.ox,view.oy,IW*view.s,IH*view.s);
   // routes
+  const wr=wpR();
   for(const [rk,wps] of Object.entries(routes)){
     const active = mode==="routes" && rk===selRoute;
     g.lineWidth=active?3:1.5; g.strokeStyle=active?"#E2412B":"rgba(226,65,43,.45)";
     g.beginPath(); wps.forEach(([u,v],i)=>{const[x,y]=toScr(u,v); i?g.lineTo(x,y):g.moveTo(x,y);}); g.stroke();
     wps.forEach(([u,v])=>{const[x,y]=toScr(u,v);g.fillStyle=active?"#fff":"rgba(255,255,255,.5)";
-      g.beginPath();g.arc(x,y,active?4:3,0,7);g.fill();});
+      g.beginPath();g.arc(x,y,active?wr:wr*0.8,0,7);g.fill();});
   }
   // points
+  const R=markerR();
   for(const [k,p] of Object.entries(points)){
     const[x,y]=toScr(p.u,p.v); const sel=k===selKey&&mode==="points";
-    const col = p.force==="vrk" ? "#E8C24A" : "#cfd6da";
-    g.beginPath();g.arc(x,y,sel?8:6,0,7);g.fillStyle=col;g.fill();
+    const r=sel?R*1.3:R; const col = p.force==="vrk" ? "#E8C24A" : "#cfd6da";
+    g.beginPath();g.arc(x,y,r,0,7);g.fillStyle=col;g.fill();
     g.lineWidth=sel?3:1.5;g.strokeStyle=sel?"#E2412B":"#0c1012";g.stroke();
-    if(p.force==="vrk"){g.fillStyle="#A02128";g.font="bold 9px Arial";g.textAlign="center";g.textBaseline="middle";g.fillText("★",x,y+0.5);}
-    if(view.s>0.12||sel){g.fillStyle=sel?"#fff":"rgba(247,249,239,.8)";g.font=(sel?"bold ":"")+"11px Arial";
-      g.textAlign="left";g.textBaseline="alphabetic";g.fillText(p.name||k,x+9,y-7);}
+    if(p.force==="vrk"){g.fillStyle="#A02128";g.font="bold "+Math.round(r*1.3)+"px Arial";g.textAlign="center";g.textBaseline="middle";g.fillText("★",x,y+0.5);}
+    if(view.s>0.12||sel){g.fillStyle=sel?"#fff":"rgba(247,249,239,.85)";g.font=(sel?"bold ":"")+Math.max(11,Math.round(r*0.9))+"px Arial";
+      g.textAlign="left";g.textBaseline="alphabetic";g.fillText(p.name||k,x+r+3,y-r*0.5);}
   }
 }
 
 // ---- hit testing ----
-function hitPoint(x,y){for(const[k,p]of Object.entries(points)){const[px,py]=toScr(p.u,p.v);
-  if((px-x)**2+(py-y)**2<100)return k;}return null;}
-function hitWp(x,y){if(!selRoute||!routes[selRoute])return -1;
-  return routes[selRoute].findIndex(([u,v])=>{const[px,py]=toScr(u,v);return (px-x)**2+(py-y)**2<90;});}
+function hitPoint(x,y){const R=markerR()+5;for(const[k,p]of Object.entries(points)){const[px,py]=toScr(p.u,p.v);
+  if((px-x)**2+(py-y)**2<R*R)return k;}return null;}
+function hitWp(x,y){if(!selRoute||!routes[selRoute])return -1;const R=wpR()+6;
+  return routes[selRoute].findIndex(([u,v])=>{const[px,py]=toScr(u,v);return (px-x)**2+(py-y)**2<R*R;});}
 
 c.addEventListener("mousedown",e=>{
   const x=e.offsetX,y=e.offsetY;
   if(mode==="points"){
     const k=hitPoint(x,y);
-    if(k){selKey=k;syncSel();dragging={type:"pt",key:k};draw();return;}
+    if(k){selKey=k;syncSel();dragging={type:"pt",key:k,su:points[k].u,sv:points[k].v,moved:false};draw();return;}
   } else {
     const wi=hitWp(x,y);
-    if(wi>=0){dragging={type:"wp",i:wi};return;}
+    if(wi>=0){dragging={type:"wp",i:wi,su:routes[selRoute][wi][0],sv:routes[selRoute][wi][1],moved:false};return;}
   }
   dragging={type:"pan",x,y,ox:view.ox,oy:view.oy}; c.classList.add("drag");
 });
@@ -124,15 +130,34 @@ addEventListener("mousemove",e=>{
   if(x>=0&&y>=0){const[u,v]=toUV(x,y);document.getElementById("uv").textContent=`u ${u.toFixed(4)}, v ${v.toFixed(4)}`;}
   if(!dragging)return;
   if(dragging.type==="pan"){view.ox=dragging.ox+(e.clientX-dragging.x);view.oy=dragging.oy+(y-(dragging.y));draw();}
-  else if(dragging.type==="pt"){const[u,v]=toUV(x,y);points[dragging.key].u=+u.toFixed(4);points[dragging.key].v=+v.toFixed(4);draw();}
-  else if(dragging.type==="wp"){const[u,v]=toUV(x,y);routes[selRoute][dragging.i]=[+u.toFixed(4),+v.toFixed(4)];draw();}
+  else if(dragging.type==="pt"){dragging.moved=true;const[u,v]=toUV(x,y);points[dragging.key].u=+u.toFixed(4);points[dragging.key].v=+v.toFixed(4);draw();}
+  else if(dragging.type==="wp"){dragging.moved=true;const[u,v]=toUV(x,y);routes[selRoute][dragging.i]=[+u.toFixed(4),+v.toFixed(4)];draw();}
 });
-addEventListener("mouseup",()=>{dragging=null;c.classList.remove("drag");});
+let suppressClick=false;
+addEventListener("mouseup",()=>{
+  if(dragging&&dragging.moved){
+    suppressClick=true;                 // не давать click ещё раз двигать
+    if(dragging.type==="pt"){
+      const k=dragging.key;
+      if(!confirm(`Сохранить новое положение «${points[k].name||k}»?`)){
+        points[k].u=dragging.su;points[k].v=dragging.sv;draw();}
+    } else if(dragging.type==="wp"){
+      if(!confirm("Сохранить новое положение точки маршрута?")){
+        routes[selRoute][dragging.i]=[dragging.su,dragging.sv];draw();}
+    }
+  }
+  dragging=null;c.classList.remove("drag");
+});
 
 c.addEventListener("click",e=>{
+  if(suppressClick){suppressClick=false;return;}
   if(dragging)return;
   const x=e.offsetX,y=e.offsetY,[u,v]=toUV(x,y);
-  if(mode==="points"&&selKey&&!hitPoint(x,y)){points[selKey].u=+u.toFixed(4);points[selKey].v=+v.toFixed(4);draw();}
+  if(mode==="points"&&selKey&&!hitPoint(x,y)){
+    const p=points[selKey],ou=p.u,ov=p.v;
+    p.u=+u.toFixed(4);p.v=+v.toFixed(4);draw();
+    if(!confirm(`Поставить «${p.name||selKey}» сюда?`)){p.u=ou;p.v=ov;draw();}
+  }
   else if(mode==="routes"&&selRoute){if(hitWp(x,y)<0){routes[selRoute].push([+u.toFixed(4),+v.toFixed(4)]);draw();}}
 });
 c.addEventListener("wheel",e=>{e.preventDefault();const x=e.offsetX,y=e.offsetY;const[u,v]=toUV(x,y);
@@ -177,6 +202,7 @@ function serialize(){
   for(const[k,wps]of Object.entries(routes)) s+=`    ${k}: ${JSON.stringify(wps)},\n`;
   s+="  },\n};\n"; return s;
 }
+document.getElementById("resetBtn").onclick=()=>{if(confirm("Вернуть все позиции из файла (отменить несохранённые сдвиги)?"))location.reload();};
 document.getElementById("exportBtn").onclick=()=>{document.getElementById("out").value=serialize();document.getElementById("modal").classList.add("show");};
 document.getElementById("closeBtn").onclick=()=>document.getElementById("modal").classList.remove("show");
 document.getElementById("copyBtn").onclick=()=>{navigator.clipboard.writeText(document.getElementById("out").value);};
