@@ -16,6 +16,7 @@
   button:hover{border-color:var(--brass)}
   button.on{background:var(--brass);color:#181d21;border-color:var(--brass)}
   #hint{margin-left:auto;color:#8b969c;font-size:12px}
+  #status{font-size:12px;min-width:96px;font-weight:600}
   #uv{color:var(--brass);font-variant-numeric:tabular-nums;min-width:150px;text-align:right}
   canvas{position:fixed;top:46px;left:0;display:block;cursor:grab}
   canvas.drag{cursor:grabbing}
@@ -47,6 +48,8 @@
       <button id="clrRoute">очистить</button>
     </span>
     <button id="resetBtn" title="вернуть позиции из файла">↺ из файла</button>
+    <button id="saveBtn" title="записать в data/locations.js">💾 сохранить</button>
+    <span id="status"></span>
     <button id="exportBtn">экспорт JSON</button>
     <span id="uv">u — , v —</span>
     <span id="hint">колесо — зум · тащить фон — двигать · тащить метку — двигать · клик по карте — поставить выбранную</span>
@@ -142,11 +145,11 @@ addEventListener("mouseup",()=>{
     suppressClick=true;                 // не давать click ещё раз двигать
     if(dragging.type==="pt"){
       const k=dragging.key;
-      if(!confirm(`Сохранить новое положение «${points[k].name||k}»?`)){
-        points[k].u=dragging.su;points[k].v=dragging.sv;draw();}
+      if(confirm(`Сохранить новое положение «${points[k].name||k}»?`)) autosave();
+      else {points[k].u=dragging.su;points[k].v=dragging.sv;draw();}
     } else if(dragging.type==="wp"){
-      if(!confirm("Сохранить новое положение точки маршрута?")){
-        routes[selRoute][dragging.i]=[dragging.su,dragging.sv];draw();}
+      if(confirm("Сохранить новое положение точки маршрута?")) autosave();
+      else {routes[selRoute][dragging.i]=[dragging.su,dragging.sv];draw();}
     }
   }
   dragging=null;c.classList.remove("drag");
@@ -160,10 +163,11 @@ c.addEventListener("click",e=>{
   if(mode==="points"&&armPlace&&selKey&&!hitPoint(x,y)){
     const p=points[selKey],ou=p.u,ov=p.v;
     p.u=+u.toFixed(4);p.v=+v.toFixed(4);draw();
-    if(!confirm(`Поставить «${p.name||selKey}» сюда?`)){p.u=ou;p.v=ov;draw();}
+    if(confirm(`Поставить «${p.name||selKey}» сюда?`)) autosave();
+    else {p.u=ou;p.v=ov;draw();}
     setArm(false);                       // после постановки — обычный режим (пан карты)
   }
-  else if(mode==="routes"&&selRoute){if(hitWp(x,y)<0){routes[selRoute].push([+u.toFixed(4),+v.toFixed(4)]);draw();}}
+  else if(mode==="routes"&&selRoute){if(hitWp(x,y)<0){routes[selRoute].push([+u.toFixed(4),+v.toFixed(4)]);draw();autosave();}}
   // иначе клик по пустому месту ничего не двигает — это режим перемещения карты
 });
 c.addEventListener("wheel",e=>{e.preventDefault();const x=e.offsetX,y=e.offsetY;const[u,v]=toUV(x,y);
@@ -194,8 +198,8 @@ document.getElementById("addPoint").onclick=()=>{const k=prompt("ключ нов
   const name=prompt("название (рус):")||k; const force=confirm("ВРК (жёлтый)? OK=да, Отмена=чёрный")?"vrk":"pg";
   points[k]={u:0.5,v:0.5,name,force};fillSelects();selKey=k;syncSel();setArm(true);draw();};
 document.getElementById("newRoute").onclick=()=>{const k=prompt("ключ маршрута:");if(!k)return;routes[k]=[];fillSelects();selRoute=k;document.getElementById("selRoute").value=k;draw();};
-document.getElementById("undoWp").onclick=()=>{if(routes[selRoute])routes[selRoute].pop();draw();};
-document.getElementById("clrRoute").onclick=()=>{if(routes[selRoute])routes[selRoute]=[];draw();};
+document.getElementById("undoWp").onclick=()=>{if(routes[selRoute])routes[selRoute].pop();draw();autosave();};
+document.getElementById("clrRoute").onclick=()=>{if(routes[selRoute])routes[selRoute]=[];draw();autosave();};
 function centerOn(u,v){const[x,y]=[c.width/2,c.height/2];view.ox=x-u*IW*view.s;view.oy=y-v*IH*view.s;}
 
 // ---- export ----
@@ -209,6 +213,19 @@ function serialize(){
   for(const[k,wps]of Object.entries(routes)) s+=`    ${k}: ${JSON.stringify(wps)},\n`;
   s+="  },\n};\n"; return s;
 }
+// ---- автосохранение в файл (через tools/edit_server.py) ----
+let saveTimer=null, warnedNoServer=false;
+function flash(msg,warn){const s=document.getElementById("status");s.textContent=msg;
+  s.style.color=warn?"#E2412B":"#7ec77e";clearTimeout(flash._t);flash._t=setTimeout(()=>{s.textContent="";},2600);}
+async function saveNow(){
+  try{const r=await fetch("/api/save-locations",{method:"POST",headers:{"Content-Type":"text/plain"},body:serialize()});
+    if(!r.ok)throw 0; flash("сохранено в data/locations.js");}
+  catch(e){ if(!warnedNoServer){warnedNoServer=true;
+      alert("Автосохранение недоступно: запусти сервер  python3 tools/edit_server.py  и открой страницу через него.\nПока что используй «экспорт JSON».");}
+    flash("⚠ не сохранено — нет сервера",true);}
+}
+function autosave(){clearTimeout(saveTimer);saveTimer=setTimeout(saveNow,150);}  // дебаунс
+document.getElementById("saveBtn").onclick=saveNow;
 document.getElementById("resetBtn").onclick=()=>{if(confirm("Вернуть все позиции из файла (отменить несохранённые сдвиги)?"))location.reload();};
 document.getElementById("exportBtn").onclick=()=>{document.getElementById("out").value=serialize();document.getElementById("modal").classList.add("show");};
 document.getElementById("closeBtn").onclick=()=>document.getElementById("modal").classList.remove("show");

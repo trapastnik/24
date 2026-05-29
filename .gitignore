@@ -14,3 +14,6 @@ in/Кадр9_интерьер Зимнего дв 17г/
 
 # --- Large derived texture (the 6.9 MB .jpg is committed instead) ---
 assets/map/petrograd_5000.png
+
+# runtime backup from edit_server
+data/locations.js.bak
