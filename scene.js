@@ -133,78 +133,111 @@ function markerTex(force, state) {
   return force === "vrk" ? TEX_VRK : TEX_PG;
 }
 
-// ----------------------------------------------------------------- markers manager
-const markersGroup = new THREE.Group(); scene.add(markersGroup);
-let markers = [];   // {key, sprite, force, baseState, becomes, at, pulse, baseScale}
+// ----------------------------------------------------------------- objects (ПОСТОЯННЫЕ 3D-ориентиры/объёмы)
+// Все объекты сценария строятся ОДИН раз и живут весь ролик. Когда про объект не идёт
+// речь — он полупрозрачный (приглушён); когда он в фокусе кадра — полная яркость, цвет
+// силы и пульс. «Захват» (becomes:"red") монотонен по кадрам: раз красный — остаётся
+// красным до конца (корректно и при перемотке).
+const objGroup = new THREE.Group(); scene.add(objGroup);
+let objects = {};        // key → { mesh, isModel, pad, baseForce, captureShot, at, isActive, force, pulse }
 
 const HERO = ["smolny", "winter", "fortress", "mariinsky", "tauride"];
-function addForcePad(w, force, size) {
-  // плашка-подсветка в цвете силы под 3D-моделью (читаемость принадлежности + пульс)
-  const col = force === "vrk" ? COL.vrk : COL.graphite;
+const DIM_OP = 0.22, DIM_MODEL_OP = 0.3;     // прозрачность «не в фокусе»
+
+function addForcePad(w, size) {
+  // плашка-подсветка в цвете силы под 3D-моделью (цвет/яркость задаёт updateObjects)
   const mat = new THREE.MeshStandardMaterial({
-    color: col, emissive: col, emissiveIntensity: force === "vrk" ? 0.6 : 0.18,
-    roughness: 0.6, metalness: 0.0, transparent: true, opacity: 0.5,
-  });
+    color: COL.vrk, emissive: COL.vrk, emissiveIntensity: 0.3,
+    roughness: 0.6, metalness: 0.0, transparent: true, opacity: 0.4 });
   const pad = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.6, size * 0.6, 0.4, 28), mat);
-  pad.position.set(w.x, 0.2, w.z);
-  markersGroup.add(pad);
-  return pad;
+  pad.position.set(w.x, 0.2, w.z); objGroup.add(pad); return pad;
 }
-function buildMarkers(shot) {
-  markersGroup.clear(); markers = [];
-  for (const p of (shot.points || [])) {
-    const L = loc(p.key); if (!L || L.u == null) continue;
-    const force = p.force || L.force || "pg";
-    const w = uvToWorld(L.u, L.v, 0);
-
-    // ориентир с 3D-моделью → ставим модель + плашку силы (боксы для остального)
-    if (modelCache[p.key]) {
-      const model = modelCache[p.key].clone(true);
-      if (p.becomes === "red") model.traverse((o) => { if (o.isMesh) o.material = o.material.clone(); });
-      model.position.set(w.x, 0, w.z);
-      markersGroup.add(model);
-      const pad = addForcePad(w, force, MODEL_CFG[p.key].size);
-      markers.push({ ...p, mesh: model, pad, force, isModel: true, redApplied: false });
-      continue;
+// индекс всех объектов сценария: какая сила, каким кадром (и при каком lp) захвачен
+function objectIndex() {
+  const idx = {};
+  SCN.shots.forEach((s, si) => (s.points || []).forEach((p) => {
+    const o = idx[p.key] || (idx[p.key] = { vrk: false, captureShot: Infinity, at: 0 });
+    if (p.force === "vrk") o.vrk = true;
+    if (p.becomes === "red" && si < o.captureShot) { o.captureShot = si; o.at = p.at ?? 0; }
+  }));
+  return idx;
+}
+function buildObjects() {
+  objGroup.clear(); objects = {};
+  const idx = objectIndex();
+  // ориентиры с 3D-моделью (data/models.js) присутствуют ВСЕГДА как постоянные фоновые
+  // объекты, даже если не заданы ни в одном кадре сценария (напр. Таврический). Сила —
+  // из locations.js; «в фокусе» они не бывают, значит всегда приглушены.
+  for (const key in MODEL_CFG) if (!idx[key]) {
+    const L = loc(key);
+    idx[key] = { vrk: !!(L && L.force === "vrk"), captureShot: Infinity, at: 0 };
+  }
+  for (const key in idx) {
+    const L = loc(key); if (!L || L.u == null) continue;
+    const meta = idx[key], w = uvToWorld(L.u, L.v, 0), baseForce = meta.vrk ? "vrk" : "pg";
+    const rec = { key, baseForce, captureShot: meta.captureShot, at: meta.at,
+                  isActive: false, force: baseForce, pulse: null };
+    if (modelCache[key]) {
+      const model = modelCache[key].clone(true);
+      model.traverse((c) => { if (c.isMesh) {
+        c.material = c.material.clone(); c.material.transparent = true;
+        c.userData.emHex = c.material.emissive ? c.material.emissive.getHex() : 0;
+        c.userData.emInt = c.material.emissiveIntensity ?? 1;
+      }});
+      model.position.set(w.x, 0, w.z); objGroup.add(model);
+      rec.mesh = model; rec.isModel = true; rec.pad = addForcePad(w, MODEL_CFG[key].size);
+    } else {
+      const isBridge = /_br$/.test(key), hero = HERO.includes(key);
+      const fw = isBridge ? 2.0 : (hero ? 3.6 : 2.6), fh = isBridge ? 1.2 : (hero ? 7.0 : 4.2);
+      const box = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, fw),
+        new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.15, transparent: true }));
+      box.position.set(w.x, fh / 2, w.z); objGroup.add(box);
+      rec.mesh = box; rec.isModel = false;
     }
-
-    const isBridge = /_br$/.test(p.key);
-    const hero = HERO.includes(p.key);
-    const fw = isBridge ? 2.0 : (hero ? 3.6 : 2.6);   // след (ширина/глубина), world units
-    const fh = isBridge ? 1.2 : (hero ? 7.0 : 4.2);   // высота объёма
-    const col = force === "vrk" ? COL.vrk : COL.pg;
-    const mat = new THREE.MeshStandardMaterial({
-      color: col, emissive: col, emissiveIntensity: force === "vrk" ? 0.35 : 0.06,
-      roughness: 0.55, metalness: 0.15,
-    });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, fw), mat);
-    box.position.set(w.x, fh / 2, w.z);
-    markersGroup.add(box);
-    // тонкая «крыша»-кромка для читаемости
-    markers.push({ ...p, mesh: box, force, baseH: fh, redApplied: false });
+    objects[key] = rec;
   }
 }
-function tintRed(obj) {
-  if (obj.material) {
-    obj.material.color.setHex(COL.redLight);
-    obj.material.emissive.setHex(COL.redLight);
-    obj.material.emissiveIntensity = 0.5;
-  } else {  // 3D-модель: подсветить меши «захваченным» красным
-    obj.traverse((o) => { if (o.isMesh) { o.material.emissive.setHex(COL.redLight); o.material.emissiveIntensity = 0.45; } });
+// статичные факты кадра: что в фокусе, какая сила, пульс (вызывается на смене кадра)
+function applyShotToObjects(idx) {
+  const shot = SCN.shots[idx]; if (!shot) return;
+  const active = {};
+  for (const p of (shot.points || [])) active[p.key] = p;     // последний выигрывает
+  for (const key in objects) {
+    const o = objects[key], p = active[key];
+    o.isActive = !!p;
+    o.pulse = p ? p.pulse : null;
+    o.force = (p && p.force) ? p.force : o.baseForce;
   }
 }
-function updateMarkers(lp, time) {
-  for (const m of markers) {
-    if (m.becomes === "red" && !m.redApplied && lp >= (m.at ?? 0)) {
-      tintRed(m.mesh);
-      if (m.pad) { m.pad.material.color.setHex(COL.redLight); m.pad.material.emissive.setHex(COL.redLight); m.pad.material.emissiveIntensity = 0.6; }
-      m.redApplied = true;
-    }
-    if (m.pulse) {
-      const fast = m.pulse === "fast";
-      const e = 0.3 + 0.6 * Math.abs(Math.sin(time * (fast ? 7 : 3.2)));
-      if (m.mesh.material) m.mesh.material.emissiveIntensity = e;             // боксы
-      else if (m.pad && !m.redApplied) m.pad.material.emissiveIntensity = e;  // плашка под моделью
+function isCaptured(o, idx, lp) {
+  if (o.captureShot === Infinity) return false;
+  if (idx > o.captureShot) return true;
+  return idx === o.captureShot && lp >= (o.at || 0);
+}
+function setOpacity(m, op) { m.opacity = op; m.transparent = op < 1; m.depthWrite = op >= 1; }
+// покадрово: прозрачность/цвет/пульс по фокусу и захвату
+function updateObjects(lp, time) {
+  for (const key in objects) {
+    const o = objects[key], red = isCaptured(o, curIdx, lp), act = o.isActive, force = o.force;
+    let pulseE = null;
+    if (act && o.pulse) { const fast = o.pulse === "fast"; pulseE = 0.3 + 0.6 * Math.abs(Math.sin(time * (fast ? 7 : 3.2))); }
+    if (o.isModel) {
+      const op = act ? 1.0 : DIM_MODEL_OP;
+      o.mesh.traverse((c) => { if (!c.isMesh) return; const m = c.material; setOpacity(m, op);
+        if (m.emissive) {
+          if (red) { m.emissive.setHex(COL.redLight); m.emissiveIntensity = act ? 0.5 : 0.22; }
+          else { m.emissive.setHex(c.userData.emHex); m.emissiveIntensity = c.userData.emInt; }
+        }});
+      if (o.pad) { const pm = o.pad.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.graphite);
+        pm.color.setHex(col); pm.emissive.setHex(col);
+        pm.emissiveIntensity = pulseE != null ? pulseE : (act ? (red ? 0.6 : force === "vrk" ? 0.6 : 0.25) : (red ? 0.3 : 0.12));
+        pm.opacity = act ? 0.5 : 0.18;
+      }
+    } else {
+      const m = o.mesh.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.pg);
+      m.color.setHex(col); m.emissive.setHex(col);
+      m.emissiveIntensity = pulseE != null ? pulseE : (act ? (red ? 0.5 : force === "vrk" ? 0.4 : 0.16) : (red ? 0.18 : 0.05));
+      setOpacity(m, act ? 1.0 : DIM_OP);
     }
   }
 }
@@ -244,6 +277,169 @@ function updateRoutes(lp) {
   }
 }
 
+// ----------------------------------------------------------------- FX (спецэффекты кадров)
+// fx[] из сценария рисуются ЗДЕСЬ: пунктир телеграмм, волна от Смольного, кольцо
+// вокруг Зимнего, выстрел «Авроры», заливка красным, лучи Смольного + полноэкранная
+// вспышка (HUD-оверлей #fx-flash). Каждый эффект знает свой `at` (локальный прогресс
+// кадра 0..1) и считает собственную фазу fp = (lp − at)/(1 − at).
+const FX_Y = 1.6;                                   // эффекты чуть над картой
+const fxGroup = new THREE.Group(); scene.add(fxGroup);
+let fxItems = [];        // [{ update(lp, time) }]
+let fxFlashes = [];      // [{ lp, fired, color }]  — одноразовые полноэкранные вспышки
+let flashEnergy = 0;     // затухающая «яркость» оверлея
+
+const easeOut = (t) => 1 - (1 - t) * (1 - t);
+const seg = (x, a, b) => Math.min(1, Math.max(0, (x - a) / (b - a)));
+const tri = (x, c, w) => Math.max(0, 1 - Math.abs(x - c) / w);     // треугольный импульс 0..1
+const fpOf = (lp, at) => (at >= 1 ? (lp >= 1 ? 1 : 0) : Math.max(0, (lp - at) / (1 - at)));
+
+const TEX_GLOW = spriteCanvas((g, s) => {
+  const cx = s / 2, grd = g.createRadialGradient(cx, cx, 0, cx, cx, cx);
+  grd.addColorStop(0, "rgba(255,255,255,1)");
+  grd.addColorStop(0.35, "rgba(255,240,205,0.7)");
+  grd.addColorStop(1, "rgba(255,240,205,0)");
+  g.fillStyle = grd; g.fillRect(0, 0, s, s);
+});
+function fxPoint(key) { const L = loc(key); return L && L.u != null ? uvToWorld(L.u, L.v, FX_Y) : null; }
+function glowSprite(color, scale = 6) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: TEX_GLOW, color, transparent: true, opacity: 0, depthTest: false, blending: THREE.AdditiveBlending }));
+  sp.scale.set(scale, scale, 1); sp.renderOrder = 21; fxGroup.add(sp); return sp;
+}
+function flatRing(color, additive = true) {       // тонкое кольцо единичного радиуса, лежит в XZ
+  const m = new THREE.Mesh(
+    new THREE.RingGeometry(0.9, 1.0, 72),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, side: THREE.DoubleSide,
+      depthTest: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending }));
+  m.rotation.x = -Math.PI / 2; m.renderOrder = 20; fxGroup.add(m); return m;
+}
+function triggerFlash(color) { flashEnergy = 1; if (hud.flash) hud.flash.style.background = color; }
+
+const FX_BUILD = {
+  // пунктир телеграмм: бегущие огоньки от источника к направлениям (флоту)
+  telegrams(f) {
+    const a = fxPoint(f.from); if (!a) return; const at = f.at ?? 0;
+    const segs = [];
+    for (const key of (f.to || [])) {
+      const b = fxPoint(key); if (!b) continue;
+      const tube = new THREE.Mesh(
+        new THREE.TubeGeometry(new THREE.LineCurve3(a.clone(), b.clone()), 1, 0.16, 6, false),
+        new THREE.MeshBasicMaterial({ color: COL.vrk, transparent: true, opacity: 0, depthTest: false }));
+      tube.renderOrder = 18; fxGroup.add(tube);
+      const dots = []; for (let i = 0; i < 4; i++) dots.push(glowSprite(COL.vrk, 3));
+      segs.push({ a: a.clone(), b: b.clone(), tube, dots });
+    }
+    fxItems.push({ update(lp, time) {
+      const fp = fpOf(lp, at);
+      for (const s of segs) {
+        s.tube.material.opacity = 0.22 * fp;
+        s.dots.forEach((d, i) => {
+          const ph = (time * 0.5 + i / s.dots.length) % 1, env = Math.sin(ph * Math.PI);
+          d.position.lerpVectors(s.a, s.b, ph);
+          d.material.opacity = fp * (0.25 + 0.75 * env);
+          const sc = 2.2 + 1.8 * env; d.scale.set(sc, sc, 1);
+        });
+      }
+    } });
+  },
+  // волна: концентрические кольца, расходящиеся от точки (вести разлетаются по городу)
+  wave(f) {
+    const c = fxPoint(f.from); if (!c) return; const at = f.at ?? 0;
+    const rings = [0, 1, 2].map(() => { const r = flatRing(COL.vrk); r.position.copy(c); return r; });
+    const core = glowSprite(COL.vrk, 7); core.position.copy(c);
+    fxItems.push({ update(lp, time) {
+      const fp = fpOf(lp, at);
+      core.material.opacity = 0.6 * Math.min(1, fp * 3);
+      const cs = 6 + Math.sin(time * 3) * 1.2; core.scale.set(cs, cs, 1);
+      rings.forEach((r, i) => {
+        const ph = (time * 0.32 + i / rings.length) % 1, rad = 3 + ph * 40;
+        r.scale.set(rad, rad, 1); r.material.opacity = (1 - ph) * 0.55 * Math.min(1, fp * 2);
+      });
+    } });
+  },
+  // полноэкранная вспышка — одноразовый HUD-оверлей
+  flash(f) { fxFlashes.push({ lp: f.at ?? 0.5, fired: false, color: "rgba(247,249,239,0.95)" }); },
+  // кольцо: «прицельное» кольцо вокруг объекта, медленно сжимается за кадр
+  ring(f) {
+    const c = fxPoint(f.around); if (!c) return; const at = f.at ?? 0;
+    const ring = flatRing(COL.redLight, false), echo = flatRing(COL.redLight);
+    ring.position.copy(c); echo.position.copy(c);
+    fxItems.push({ update(lp, time) {
+      const fp = fpOf(lp, at), big = 17, small = 7;
+      const rad = big - (big - small) * easeOut(fp), pulse = 1 + 0.03 * Math.sin(time * 4.5);
+      ring.scale.set(rad * pulse, rad * pulse, 1); ring.material.opacity = 0.9 * Math.min(1, fp * 3);
+      echo.scale.set(rad * 1.07, rad * 1.07, 1);
+      echo.material.opacity = (0.22 + 0.18 * Math.sin(time * 4.5)) * Math.min(1, fp * 3);
+    } });
+  },
+  // выстрел «Авроры»: сигнал с крепости → дульная вспышка + ударная волна → снаряд → удар
+  shot(f) {
+    const aur = fxPoint(f.from), fort = fxPoint(f.signalFrom), win = fxPoint(f.to);
+    if (!aur || !win) return; const at = f.at ?? 0;
+    const signal = glowSprite(COL.vrk, 5); if (fort) signal.position.copy(fort);
+    const muzzle = glowSprite(0xffe6b0, 5); muzzle.position.copy(aur);
+    const shock = flatRing(0xffe6b0); shock.position.copy(aur);
+    const ball = glowSprite(0xfff0c0, 4);
+    const impact = glowSprite(COL.redLight, 5); impact.position.copy(win);
+    fxFlashes.push({ lp: at + 0.68 * (1 - at), fired: false, color: "rgba(226,65,43,0.6)" });
+    fxItems.push({ update(lp, time) {
+      const fp = fpOf(lp, at);
+      let o = tri(fp, 0.10, 0.12); signal.material.opacity = o; signal.scale.setScalar(4 + 6 * o);
+      o = tri(fp, 0.33, 0.10); muzzle.material.opacity = 1.2 * o; muzzle.scale.setScalar(4 + 12 * o);
+      const sp = seg(fp, 0.30, 0.62), sr = 2 + sp * 26;
+      shock.scale.set(sr, sr, 1); shock.material.opacity = (1 - sp) * 0.7;
+      const bp = seg(fp, 0.34, 0.64);
+      ball.visible = bp > 0 && bp < 1; ball.position.lerpVectors(aur, win, bp);
+      ball.material.opacity = ball.visible ? 1 : 0; ball.scale.setScalar(3 + 2 * Math.sin(bp * Math.PI));
+      o = tri(fp, 0.68, 0.16); impact.material.opacity = 1.3 * o; impact.scale.setScalar(5 + 16 * o);
+    } });
+  },
+  // заливка красным «как чернила»: растущий диск + кромка от точки (объект взят)
+  flood(f) {
+    const c = fxPoint(f.from); if (!c) return; const at = f.at ?? 0;
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 72),
+      new THREE.MeshBasicMaterial({ color: COL.red, transparent: true, opacity: 0, depthTest: false }));
+    disc.rotation.x = -Math.PI / 2; disc.position.copy(c); disc.position.y = 0.5;
+    disc.renderOrder = 16; fxGroup.add(disc);
+    const edge = flatRing(COL.redLight); edge.position.copy(c); edge.position.y = 0.6;
+    fxItems.push({ update(lp) {
+      const fp = fpOf(lp, at), rad = 2 + 30 * easeOut(fp);
+      disc.scale.set(rad, rad, 1); disc.material.opacity = 0.45 * Math.min(1, fp * 2.5);
+      edge.scale.set(rad, rad, 1); edge.material.opacity = (1 - fp) * 0.6;
+    } });
+  },
+  // лучи Смольного: веер вращающихся лучей + ядро (финальное сияние штаба)
+  rays(f) {
+    const c = fxPoint(f.from); if (!c) return; const at = f.at ?? 0;
+    const grp = new THREE.Group(); grp.position.copy(c); grp.position.y = 1.0; fxGroup.add(grp);
+    const N = 16, len = 42, hw = 1.7, beams = [];
+    for (let i = 0; i < N; i++) {
+      const verts = new Float32Array([0, 0, 0, len, 0, -hw, len, 0, hw]);
+      const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+      const mat = new THREE.MeshBasicMaterial({ color: COL.vrk, transparent: true, opacity: 0,
+        depthTest: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+      const m = new THREE.Mesh(geo, mat); m.rotation.y = (i / N) * Math.PI * 2; m.renderOrder = 17;
+      grp.add(m); beams.push(m);
+    }
+    const core = glowSprite(0xfff0c0, 9); core.position.copy(c); core.position.y = 2;
+    fxItems.push({ update(lp, time) {
+      const fp = fpOf(lp, at), on = Math.min(1, fp * 1.5);
+      grp.rotation.y = time * 0.12;
+      beams.forEach((m, i) => { m.material.opacity = (0.12 + 0.07 * Math.sin(time * 1.8 + i)) * on; });
+      core.material.opacity = 0.95 * Math.min(1, fp * 2.5);
+      const cs = 8 + Math.sin(time * 2.5) * 1.5; core.scale.set(cs, cs, 1);
+    } });
+  },
+};
+function buildFx(shot) {
+  fxGroup.clear(); fxItems = []; fxFlashes = [];
+  for (const f of (shot.fx || [])) { const b = FX_BUILD[f.type]; if (b) b(f); }
+}
+function updateFx(lp, time) {
+  for (const it of fxItems) it.update(lp, time);
+  for (const fl of fxFlashes) if (!fl.fired && lp >= fl.lp) { fl.fired = true; triggerFlash(fl.color); }
+}
+
 // ----------------------------------------------------------------- camera rig
 const FRAMING = {
   wide:  { R: 168, pitch: 50 },
@@ -276,7 +472,7 @@ const hud = {
   quote: el("quote"), qtext: el("q-text"), qcite: el("q-cite"),
   ill: el("ill"), illImg: el("ill-img"), illCap: el("ill-cap"),
   fill: el("trackFill"), clock: el("clock"), track: el("track"), play: el("btnPlay"),
-  evTime: el("ev-time"), evDate: el("ev-date"), voFull: el("vo-full"),
+  evTime: el("ev-time"), evDate: el("ev-date"), voFull: el("vo-full"), flash: el("fx-flash"),
   techScene: el("tech-scene"), techTitle: el("tech-title"), techMeta: el("tech-meta"),
 };
 // номер кадра как в плане (Вступление / Кадр N / Финал)
@@ -351,7 +547,7 @@ function applyShot(i) {
     `<dt>${k}</dt><dd class="${k === "эффект" ? "fx" : ""}">${v}</dd>`).join("");
   ticks.forEach((tk, k) => { tk.classList.toggle("active", k === i); tk.classList.toggle("done", k < i); });
   setFraming(s);
-  buildMarkers(s); buildRoutes(s);
+  applyShotToObjects(i); buildRoutes(s); buildFx(s);
 }
 
 // ----------------------------------------------------------------- clock / loop
@@ -372,8 +568,11 @@ function frame(now) {
   camTarget.lerp(camGoalLook, k);
   camera.lookAt(camTarget);
 
-  updateMarkers(lp, animT);
+  updateObjects(lp, animT);
   updateRoutes(lp);
+  updateFx(lp, animT);
+  if (flashEnergy > 0) flashEnergy = Math.max(0, flashEnergy - dt * 2.4);
+  if (hud.flash) hud.flash.style.opacity = flashEnergy * flashEnergy;
 
   // часы/календарь по ВРЕМЕНИ СОБЫТИЯ (а не по минутам видео)
   if (s.s0 != null && s.s1 != null) {
@@ -426,10 +625,12 @@ function boot() {
   resize(); buildTicks();
   const s0 = SCN.shots[0]; setFraming(s0);
   camera.position.copy(camGoalPos); camTarget.copy(camGoalLook); camera.lookAt(camTarget);
-  // боксы-заглушки показываются сразу; когда .glb догрузятся — перестраиваем текущий кадр
+  buildObjects();                                   // боксы-заглушки показываются сразу
+  applyShotToObjects(shotIndexAt(t));
+  // когда .glb догрузятся — пересобираем объекты (модели вместо боксов)
   preloadModels().then(() => {
-    const i = curIdx >= 0 ? curIdx : shotIndexAt(t);
-    if (SCN.shots[i]) buildMarkers(SCN.shots[i]);
+    buildObjects();
+    applyShotToObjects(curIdx >= 0 ? curIdx : shotIndexAt(t));
   });
   requestAnimationFrame(frame);
 }

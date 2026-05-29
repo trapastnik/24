@@ -61,6 +61,13 @@ html, body {
   width: 100%; height: 100%; display: block; touch-action: none;
 }
 
+/* полноэкранная вспышка спецэффектов (scene.js гонит opacity 0..1) */
+.fx-flash {
+  position: absolute; inset: 0; z-index: 3; pointer-events: none;
+  opacity: 0; mix-blend-mode: screen; background: rgba(247,249,239,0.95);
+  will-change: opacity;
+}
+
 /* ТЕХНИЧЕСКАЯ ЗОНА — вне рабочего экрана (полный диктор-текст + таймлайн) */
 .tech {                                   /* ГЗК — правая панель, вне рабочего экрана */
   position: absolute; top: 0; right: 0; bottom: 0; width: var(--techW, 30%);
