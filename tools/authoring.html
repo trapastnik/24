@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>МТК №24 — редактор точек и маршрутов</title>
+<style>
+  :root{--paper:#F7F9EF;--brass:#D2B773;--red:#A02128;--ink:#14181b;}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#0c1012;color:var(--paper);
+    font-family:"Helvetica Neue",Arial,sans-serif;font-size:13px;overflow:hidden;-webkit-user-select:none;user-select:none}
+  #bar{position:fixed;top:0;left:0;right:0;height:46px;display:flex;align-items:center;gap:10px;
+    padding:0 12px;background:#181d21;border-bottom:1px solid #2a3137;z-index:10}
+  #bar b{color:var(--brass);letter-spacing:.04em}
+  select,button,input{background:#222a30;color:var(--paper);border:1px solid #3a444c;border-radius:5px;
+    padding:5px 9px;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--brass)}
+  button.on{background:var(--brass);color:#181d21;border-color:var(--brass)}
+  #hint{margin-left:auto;color:#8b969c;font-size:12px}
+  #uv{color:var(--brass);font-variant-numeric:tabular-nums;min-width:150px;text-align:right}
+  canvas{position:fixed;top:46px;left:0;display:block;cursor:grab}
+  canvas.drag{cursor:grabbing}
+  #modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:20}
+  #modal.show{display:flex}
+  #modal .box{width:min(820px,92vw);max-height:84vh;background:#181d21;border:1px solid var(--brass);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:10px}
+  textarea{width:100%;height:54vh;background:#0c1012;color:var(--paper);border:1px solid #3a444c;border-radius:6px;
+    font-family:ui-monospace,Menlo,monospace;font-size:12px;padding:10px;white-space:pre}
+  .rowg{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+</style>
+</head>
+<body>
+  <div id="bar">
+    <b>МТК-24 редактор</b>
+    <label>режим:</label>
+    <button id="mPoints" class="on">точки</button>
+    <button id="mRoutes">маршруты</button>
+    <span id="selWrap">
+      <label>точка:</label>
+      <select id="selPoint"></select>
+      <button id="addPoint">＋ новая</button>
+    </span>
+    <span id="rtWrap" style="display:none">
+      <label>маршрут:</label>
+      <select id="selRoute"></select>
+      <button id="newRoute">＋ маршрут</button>
+      <button id="undoWp">⌫ точка</button>
+      <button id="clrRoute">очистить</button>
+    </span>
+    <button id="exportBtn">экспорт JSON</button>
+    <span id="uv">u — , v —</span>
+    <span id="hint">колесо — зум · тащить фон — двигать · тащить метку — двигать · клик по карте — поставить выбранную</span>
+  </div>
+  <canvas id="c"></canvas>
+
+  <div id="modal"><div class="box">
+    <div class="rowg"><b style="color:var(--brass)">Вставь это в data/locations.js (или отдай Клоду)</b>
+      <button id="copyBtn">копировать</button><button id="dlBtn">скачать</button>
+      <button id="closeBtn" style="margin-left:auto">закрыть</button></div>
+    <textarea id="out" spellcheck="false"></textarea>
+  </div></div>
+
+<script src="../data/locations.js"></script>
+<script>
+const MAP="../assets/map/petrograd_5000.jpg";
+const L = window.MTK24_LOCATIONS || {points:{},routes:{},directions:{}};
+const points = L.points, routes = L.routes||{}, dirs = L.directions||{};
+const c=document.getElementById("c"), g=c.getContext("2d");
+const img=new Image(); let IW=1,IH=1, ready=false;
+img.onload=()=>{IW=img.naturalWidth;IH=img.naturalHeight;ready=true;fit();draw();};
+img.src=MAP;
+
+let view={s:1,ox:0,oy:0};         // screen = img_px*s + o
+let mode="points", selKey=null, selRoute=null;
+let dragging=null;                 // {type:'pan'|'pt'|'wp', ...}
+
+function resize(){c.width=innerWidth;c.height=innerHeight-46;draw();}
+addEventListener("resize",resize);
+function fit(){const s=Math.min((innerWidth)/IW,(innerHeight-46)/IH)*0.96;
+  view.s=s;view.ox=(innerWidth-IW*s)/2;view.oy=((innerHeight-46)-IH*s)/2;}
+function toScr(u,v){return [u*IW*view.s+view.ox, v*IH*view.s+view.oy];}
+function toUV(x,y){return [ (x-view.ox)/(IW*view.s), (y-view.oy)/(IH*view.s) ];}
+
+function draw(){
+  g.clearRect(0,0,c.width,c.height);
+  if(ready) g.drawImage(img,view.ox,view.oy,IW*view.s,IH*view.s);
+  // routes
+  for(const [rk,wps] of Object.entries(routes)){
+    const active = mode==="routes" && rk===selRoute;
+    g.lineWidth=active?3:1.5; g.strokeStyle=active?"#E2412B":"rgba(226,65,43,.45)";
+    g.beginPath(); wps.forEach(([u,v],i)=>{const[x,y]=toScr(u,v); i?g.lineTo(x,y):g.moveTo(x,y);}); g.stroke();
+    wps.forEach(([u,v])=>{const[x,y]=toScr(u,v);g.fillStyle=active?"#fff":"rgba(255,255,255,.5)";
+      g.beginPath();g.arc(x,y,active?4:3,0,7);g.fill();});
+  }
+  // points
+  for(const [k,p] of Object.entries(points)){
+    const[x,y]=toScr(p.u,p.v); const sel=k===selKey&&mode==="points";
+    const col = p.force==="vrk" ? "#E8C24A" : "#cfd6da";
+    g.beginPath();g.arc(x,y,sel?8:6,0,7);g.fillStyle=col;g.fill();
+    g.lineWidth=sel?3:1.5;g.strokeStyle=sel?"#E2412B":"#0c1012";g.stroke();
+    if(p.force==="vrk"){g.fillStyle="#A02128";g.font="bold 9px Arial";g.textAlign="center";g.textBaseline="middle";g.fillText("★",x,y+0.5);}
+    if(view.s>0.12||sel){g.fillStyle=sel?"#fff":"rgba(247,249,239,.8)";g.font=(sel?"bold ":"")+"11px Arial";
+      g.textAlign="left";g.textBaseline="alphabetic";g.fillText(p.name||k,x+9,y-7);}
+  }
+}
+
+// ---- hit testing ----
+function hitPoint(x,y){for(const[k,p]of Object.entries(points)){const[px,py]=toScr(p.u,p.v);
+  if((px-x)**2+(py-y)**2<100)return k;}return null;}
+function hitWp(x,y){if(!selRoute||!routes[selRoute])return -1;
+  return routes[selRoute].findIndex(([u,v])=>{const[px,py]=toScr(u,v);return (px-x)**2+(py-y)**2<90;});}
+
+c.addEventListener("mousedown",e=>{
+  const x=e.offsetX,y=e.offsetY;
+  if(mode==="points"){
+    const k=hitPoint(x,y);
+    if(k){selKey=k;syncSel();dragging={type:"pt",key:k};draw();return;}
+  } else {
+    const wi=hitWp(x,y);
+    if(wi>=0){dragging={type:"wp",i:wi};return;}
+  }
+  dragging={type:"pan",x,y,ox:view.ox,oy:view.oy}; c.classList.add("drag");
+});
+addEventListener("mousemove",e=>{
+  const x=e.clientX, y=e.clientY-46;
+  if(x>=0&&y>=0){const[u,v]=toUV(x,y);document.getElementById("uv").textContent=`u ${u.toFixed(4)}, v ${v.toFixed(4)}`;}
+  if(!dragging)return;
+  if(dragging.type==="pan"){view.ox=dragging.ox+(e.clientX-dragging.x);view.oy=dragging.oy+(y-(dragging.y));draw();}
+  else if(dragging.type==="pt"){const[u,v]=toUV(x,y);points[dragging.key].u=+u.toFixed(4);points[dragging.key].v=+v.toFixed(4);draw();}
+  else if(dragging.type==="wp"){const[u,v]=toUV(x,y);routes[selRoute][dragging.i]=[+u.toFixed(4),+v.toFixed(4)];draw();}
+});
+addEventListener("mouseup",()=>{dragging=null;c.classList.remove("drag");});
+
+c.addEventListener("click",e=>{
+  if(dragging)return;
+  const x=e.offsetX,y=e.offsetY,[u,v]=toUV(x,y);
+  if(mode==="points"&&selKey&&!hitPoint(x,y)){points[selKey].u=+u.toFixed(4);points[selKey].v=+v.toFixed(4);draw();}
+  else if(mode==="routes"&&selRoute){if(hitWp(x,y)<0){routes[selRoute].push([+u.toFixed(4),+v.toFixed(4)]);draw();}}
+});
+c.addEventListener("wheel",e=>{e.preventDefault();const x=e.offsetX,y=e.offsetY;const[u,v]=toUV(x,y);
+  view.s*=e.deltaY<0?1.15:1/1.15;view.s=Math.max(0.03,Math.min(8,view.s));
+  view.ox=x-u*IW*view.s;view.oy=y-v*IH*view.s;draw();},{passive:false});
+
+// ---- toolbar ----
+function syncSel(){document.getElementById("selPoint").value=selKey||"";}
+function fillSelects(){
+  const sp=document.getElementById("selPoint");sp.innerHTML="";
+  Object.keys(points).forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent=`${k} — ${points[k].name||""}`;sp.appendChild(o);});
+  selKey=selKey||Object.keys(points)[0]; sp.value=selKey;
+  const sr=document.getElementById("selRoute");sr.innerHTML="";
+  Object.keys(routes).forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent=k;sr.appendChild(o);});
+  selRoute=selRoute||Object.keys(routes)[0]; sr.value=selRoute;
+}
+document.getElementById("selPoint").onchange=e=>{selKey=e.target.value;
+  const p=points[selKey];const[,]=[0];centerOn(p.u,p.v);draw();};
+document.getElementById("selRoute").onchange=e=>{selRoute=e.target.value;draw();};
+document.getElementById("mPoints").onclick=()=>{mode="points";togMode();};
+document.getElementById("mRoutes").onclick=()=>{mode="routes";togMode();};
+function togMode(){document.getElementById("mPoints").classList.toggle("on",mode==="points");
+  document.getElementById("mRoutes").classList.toggle("on",mode==="routes");
+  document.getElementById("selWrap").style.display=mode==="points"?"":"none";
+  document.getElementById("rtWrap").style.display=mode==="routes"?"":"none";draw();}
+document.getElementById("addPoint").onclick=()=>{const k=prompt("ключ новой точки (латиницей):");if(!k)return;
+  const name=prompt("название (рус):")||k; const force=confirm("ВРК (жёлтый)? OK=да, Отмена=чёрный")?"vrk":"pg";
+  points[k]={u:0.5,v:0.5,name,force};fillSelects();selKey=k;syncSel();draw();};
+document.getElementById("newRoute").onclick=()=>{const k=prompt("ключ маршрута:");if(!k)return;routes[k]=[];fillSelects();selRoute=k;document.getElementById("selRoute").value=k;draw();};
+document.getElementById("undoWp").onclick=()=>{if(routes[selRoute])routes[selRoute].pop();draw();};
+document.getElementById("clrRoute").onclick=()=>{if(routes[selRoute])routes[selRoute]=[];draw();};
+function centerOn(u,v){const[x,y]=[c.width/2,c.height/2];view.ox=x-u*IW*view.s;view.oy=y-v*IH*view.s;}
+
+// ---- export ----
+function serialize(){
+  let s="window.MTK24_LOCATIONS = {\n  georef: true,\n  points: {\n";
+  for(const[k,p]of Object.entries(points))
+    s+=`    ${k}: { u: ${p.u}, v: ${p.v}, name: ${JSON.stringify(p.name||k)}, force: ${JSON.stringify(p.force||"pg")} },\n`;
+  s+="  },\n  directions: {\n";
+  for(const[k,p]of Object.entries(dirs)) s+=`    ${k}: { u: ${p.u}, v: ${p.v} },\n`;
+  s+="  },\n  routes: {\n";
+  for(const[k,wps]of Object.entries(routes)) s+=`    ${k}: ${JSON.stringify(wps)},\n`;
+  s+="  },\n};\n"; return s;
+}
+document.getElementById("exportBtn").onclick=()=>{document.getElementById("out").value=serialize();document.getElementById("modal").classList.add("show");};
+document.getElementById("closeBtn").onclick=()=>document.getElementById("modal").classList.remove("show");
+document.getElementById("copyBtn").onclick=()=>{navigator.clipboard.writeText(document.getElementById("out").value);};
+document.getElementById("dlBtn").onclick=()=>{const b=new Blob([document.getElementById("out").value],{type:"text/javascript"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="locations.js";a.click();};
+
+addEventListener("keydown",e=>{if(e.key==="Escape")document.getElementById("modal").classList.remove("show");});
+
+resize();fillSelects();togMode();
+</script>
+</body>
+</html>
