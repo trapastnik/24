@@ -48,20 +48,22 @@
       </aside>
     </div><!-- /work -->
 
-    <!-- ТЕХНИЧЕСКАЯ ЗОНА (вне рабочего экрана): полный дикторский текст + таймлайн -->
-    <footer class="tech" id="tech">
+    <!-- ГЗК: полный дикторский текст — ПРАВАЯ панель, вне рабочего экрана (технический вывод) -->
+    <aside class="tech" id="tech">
       <div class="tech-vo" id="tech-vo">
-        <span class="tech-label">полный дикторский текст (технический вывод):</span>
+        <span class="tech-label">ГЗК · полный дикторский текст (технический вывод)</span>
         <p id="vo-full"></p>
       </div>
-      <div class="transport">
-        <button class="btn-play" id="btnPlay" aria-label="пауза / воспроизведение">❚❚</button>
-        <div class="track" id="track">
-          <div class="track-line"></div>
-          <div class="track-fill" id="trackFill"></div>
-        </div>
-        <div class="clock" id="clock"><b>24 окт · --:--</b></div>
+    </aside>
+
+    <!-- таймлайн событий — нижняя полоса под рабочим экраном -->
+    <footer class="transport" id="transport">
+      <button class="btn-play" id="btnPlay" aria-label="пауза / воспроизведение">❚❚</button>
+      <div class="track" id="track">
+        <div class="track-line"></div>
+        <div class="track-fill" id="trackFill"></div>
       </div>
+      <div class="clock" id="clock"><b>24 окт · --:--</b></div>
     </footer>
   </main>
 

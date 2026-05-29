@@ -370,16 +370,19 @@ window.addEventListener("keydown", (e) => {
 
 // ----------------------------------------------------------------- working screen (размер ТЗ)
 const WORK_ASPECT = 679 / 592;     // ≈1.147 — bbox точной формы экрана (in/размер 24.PNG)
-const TECH_H = 150;                // высота технической зоны снизу, px
+const TRANSPORT_H = 48;            // нижняя полоса таймлайна, px
 function resize() {
-  const availW = window.innerWidth, availH = window.innerHeight - TECH_H;
+  // ГЗК (полный диктор-текст) — правая панель; таймлайн — снизу. Рабочий экран — слева.
+  const techW = Math.max(280, Math.min(460, window.innerWidth * 0.28));
+  document.documentElement.style.setProperty("--techW", techW + "px");
+  document.documentElement.style.setProperty("--transportH", TRANSPORT_H + "px");
+  const availW = window.innerWidth - techW, availH = window.innerHeight - TRANSPORT_H;
   const wH = Math.min(availH, availW / WORK_ASPECT);
   const wW = wH * WORK_ASPECT;
   const work = document.getElementById("work");
   work.style.width = wW + "px"; work.style.height = wH + "px";
   work.style.left = ((availW - wW) / 2) + "px";
   work.style.top = Math.max(0, (availH - wH) / 2) + "px";
-  document.documentElement.style.setProperty("--techH", TECH_H + "px");
   renderer.setSize(wW, wH, false);
   camera.aspect = wW / wH; camera.updateProjectionMatrix();
 }

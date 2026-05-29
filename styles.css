@@ -62,13 +62,13 @@ html, body {
 }
 
 /* ТЕХНИЧЕСКАЯ ЗОНА — вне рабочего экрана (полный диктор-текст + таймлайн) */
-.tech {
-  position: absolute; left: 0; right: 0; bottom: 0; height: var(--techH, 150px);
-  z-index: 7; background: #060809; border-top: 1px solid #1c2329;
+.tech {                                   /* ГЗК — правая панель, вне рабочего экрана */
+  position: absolute; top: 0; right: 0; bottom: 0; width: var(--techW, 30%);
+  z-index: 7; background: #060809; border-left: 1px solid #1c2329;
   display: flex; flex-direction: column;
-  padding: 8px clamp(16px,2vw,40px) 6px;
+  padding: clamp(16px,2.4vh,30px) clamp(14px,1.4vw,26px);
 }
-.tech-vo { flex: 1; overflow: hidden; }
+.tech-vo { flex: 1; overflow-y: auto; }
 .tech-label {
   font-family: "20 Kopeek", monospace; font-size: 10px; letter-spacing: 0.18em;
   text-transform: uppercase; color: var(--window); opacity: 0.6;
@@ -152,8 +152,8 @@ html, body {
 
 /* ---------- lower-third narration ---------- */
 .narration {
-  position: absolute; z-index: 5; left: clamp(22px,2.8vw,56px);
-  bottom: clamp(86px,12vh,140px); max-width: min(52%, 760px);
+  position: absolute; z-index: 5; left: 9%;   /* отступ внутрь, чтобы скос формы не резал текст */
+  bottom: clamp(86px,12vh,140px); max-width: min(56%, 720px);
   pointer-events: none;
   transition: opacity 0.5s ease, transform 0.5s ease;
 }
@@ -211,9 +211,10 @@ html, body {
 .dot-under  { background: var(--graphite); border: 1px solid var(--window); }
 
 /* ---------- bottom timeline / transport ---------- */
-.transport {
-  position: relative; flex-shrink: 0; height: 46px;
-  display: flex; align-items: center; gap: 18px;
+.transport {                              /* таймлайн — нижняя полоса под рабочим экраном */
+  position: absolute; left: 0; right: var(--techW, 30%); bottom: 0; height: var(--transportH, 48px);
+  z-index: 7; background: #060809; border-top: 1px solid #1c2329;
+  display: flex; align-items: center; gap: 18px; padding: 0 clamp(18px,2vw,40px);
 }
 .btn-play {
   flex-shrink: 0; width: 34px; height: 34px;
