@@ -277,7 +277,27 @@ const hud = {
   ill: el("ill"), illImg: el("ill-img"), illCap: el("ill-cap"),
   fill: el("trackFill"), clock: el("clock"), track: el("track"), play: el("btnPlay"),
   evTime: el("ev-time"), evDate: el("ev-date"), voFull: el("vo-full"),
+  techScene: el("tech-scene"), techTitle: el("tech-title"), techMeta: el("tech-meta"),
 };
+// номер кадра как в плане (Вступление / Кадр N / Финал)
+function sceneLabel(i) {
+  const s = SCN.shots[i];
+  if (s.id === "intro") return "ВСТУПЛЕНИЕ";
+  if (s.id === "finale") return "ФИНАЛ";
+  return "КАДР " + i;                 // typography=1 → Кадр 1 … winter_taken=9
+}
+const FX_RU = { telegrams: "пунктир телеграмм", wave: "волна от Смольного", flash: "вспышка",
+  ring: "сжимающееся кольцо", shot: "выстрел «Авроры»", flood: "заливка красным", rays: "лучи Смольного" };
+function shotEffects(s) {
+  const e = [];
+  (s.fx || []).forEach((f) => e.push(FX_RU[f.type] || f.type));
+  if (s.routes && s.routes.length) e.push("движение по карте");
+  if (s.sfx) e.push("звук: " + s.sfx);
+  return e.join(" · ");
+}
+function shotObjects(s) {
+  return [...new Set((s.points || []).map((p) => p.key))].join(", ");
+}
 function fmt(s) { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
 // ВРЕМЯ СОБЫТИЯ: минуты от 24 окт 00:00 → дата/время
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -316,6 +336,19 @@ function applyShot(i) {
     hud.illCap.textContent = s.illCaption || ""; hud.ill.classList.add("show");
   } else hud.ill.classList.remove("show");
   hud.voFull.textContent = s.voFull || s.narration || "";   // полный диктор-текст (тех. зона)
+  // технический заголовок: номер кадра + метаданные
+  hud.techScene.textContent = sceneLabel(i) + "  ·  " + (i + 1) + "/" + SCN.shots.length;
+  hud.techTitle.textContent = s.title || "";
+  const dur = Math.round(s.t1 - s.t0);
+  const meta = [
+    ["событие", s.s0 != null ? storyDT(s.s0).date.replace(" 1917", "") + ", " + storyDT(s.s0).time + "–" + storyDT(s.s1).time : (s.date || "")],
+    ["видео", fmt(s.t0) + "–" + fmt(s.t1) + " (" + dur + " с)"],
+    ["эффект", shotEffects(s) || "—"],
+    ["объекты", shotObjects(s) || "—"],
+  ];
+  if (s.illustration) meta.push(["иллюстр.", s.illCaption || s.illustration]);
+  hud.techMeta.innerHTML = meta.map(([k, v]) =>
+    `<dt>${k}</dt><dd class="${k === "эффект" ? "fx" : ""}">${v}</dd>`).join("");
   ticks.forEach((tk, k) => { tk.classList.toggle("active", k === i); tk.classList.toggle("done", k < i); });
   setFraming(s);
   buildMarkers(s); buildRoutes(s);
