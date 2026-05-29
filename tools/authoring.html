@@ -53,7 +53,7 @@
     <span id="status"></span>
     <button id="exportBtn">экспорт JSON</button>
     <span id="uv">u — , v —</span>
-    <span id="hint">колесо — зум · тащить фон — двигать · тащить метку — двигать · клик по карте — поставить выбранную</span>
+    <span id="hint">колесо — зум · тащить фон/метку — двигать · (маршруты) клик по линии — вставить промежуточную, тащить — двигать</span>
   </div>
   <canvas id="c"></canvas>
 
@@ -89,6 +89,17 @@ function toUV(x,y){return [ (x-view.ox)/(IW*view.s), (y-view.oy)/(IH*view.s) ];}
 // размер метки растёт с зумом (не превращается в точку), с разумным потолком
 function markerR(){return Math.max(8, Math.min(38, 0.0045*IW*view.s));}
 function wpR(){return Math.max(4, Math.min(13, 0.0026*IW*view.s));}
+// точка маршрута: этап = {u,v,n,name} (с номером), промежуточная = [u,v]
+function wpXY(p){return Array.isArray(p)?[p[0],p[1]]:[p.u,p.v];}
+function wpNum(p){return Array.isArray(p)?null:(p.n??null);}
+function setWp(p,u,v){if(Array.isArray(p)){p[0]=u;p[1]=v;}else{p.u=u;p.v=v;}}
+// расстояние от точки до отрезка (в экранных px)
+function distSeg(px,py,ax,ay,bx,by){const dx=bx-ax,dy=by-ay,L=dx*dx+dy*dy;
+  let t=L?((px-ax)*dx+(py-ay)*dy)/L:0; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+t*dx),py-(ay+t*dy));}
+function nearestSeg(x,y,wps){let bi=-1,bd=1e9;for(let i=0;i<wps.length-1;i++){
+  const[ax,ay]=toScr(...wpXY(wps[i])),[bx,by]=toScr(...wpXY(wps[i+1]));
+  const d=distSeg(x,y,ax,ay,bx,by);if(d<bd){bd=d;bi=i;}}return{i:bi,d:bd};}
 
 function draw(){
   g.clearRect(0,0,c.width,c.height);
@@ -98,14 +109,20 @@ function draw(){
   for(const [rk,wps] of Object.entries(routes)){
     const active = mode==="routes" && rk===selRoute;
     g.lineWidth=active?3:1.5; g.strokeStyle=active?"#E2412B":"rgba(226,65,43,.45)";
-    g.beginPath(); wps.forEach(([u,v],i)=>{const[x,y]=toScr(u,v); i?g.lineTo(x,y):g.moveTo(x,y);}); g.stroke();
+    g.beginPath(); wps.forEach((p,i)=>{const[x,y]=toScr(...wpXY(p)); i?g.lineTo(x,y):g.moveTo(x,y);}); g.stroke();
     const fs=Math.max(11,Math.round(wr*1.5)), rB=Math.max(wr, fs*0.82);
-    wps.forEach(([u,v],i)=>{const[x,y]=toScr(u,v);
-      g.beginPath();g.arc(x,y,active?rB:rB*0.82,0,7);
-      g.fillStyle=active?"#E2412B":"rgba(160,33,40,.55)";g.fill();
+    wps.forEach((p,i)=>{const[x,y]=toScr(...wpXY(p)); const num=wpNum(p);
+      if(num==null){ // промежуточная — маленькая точка без номера
+        g.beginPath();g.arc(x,y,active?wr*0.7:wr*0.6,0,7);
+        g.fillStyle=active?"#fff":"rgba(255,255,255,.55)";g.fill();
+        g.lineWidth=1;g.strokeStyle="#E2412B";g.stroke(); return;}
+      g.beginPath();g.arc(x,y,active?rB:rB*0.82,0,7);          // этап — бейдж с номером
+      g.fillStyle=active?"#E2412B":"rgba(160,33,40,.6)";g.fill();
       g.lineWidth=1.5;g.strokeStyle="#fff";g.stroke();
       g.fillStyle="#fff";g.font="bold "+(active?fs:Math.round(fs*0.82))+"px Arial";
-      g.textAlign="center";g.textBaseline="middle";g.fillText(i+1,x,y);});
+      g.textAlign="center";g.textBaseline="middle";g.fillText(num,x,y);
+      if(active&&p.name){g.fillStyle="rgba(247,249,239,.9)";g.font=Math.max(11,Math.round(rB*0.95))+"px Arial";
+        g.textAlign="left";g.fillText(p.name,x+rB+4,y);}});
   }
   // points
   const R=markerR();
@@ -123,8 +140,8 @@ function draw(){
 // ---- hit testing ----
 function hitPoint(x,y){const R=markerR()+5;for(const[k,p]of Object.entries(points)){const[px,py]=toScr(p.u,p.v);
   if((px-x)**2+(py-y)**2<R*R)return k;}return null;}
-function hitWp(x,y){if(!selRoute||!routes[selRoute])return -1;const R=wpR()+6;
-  return routes[selRoute].findIndex(([u,v])=>{const[px,py]=toScr(u,v);return (px-x)**2+(py-y)**2<R*R;});}
+function hitWp(x,y){if(!selRoute||!routes[selRoute])return -1;const R=wpR()+8;
+  return routes[selRoute].findIndex(p=>{const[u,v]=wpXY(p),[px,py]=toScr(u,v);return (px-x)**2+(py-y)**2<R*R;});}
 
 c.addEventListener("mousedown",e=>{
   const x=e.offsetX,y=e.offsetY;
@@ -133,7 +150,7 @@ c.addEventListener("mousedown",e=>{
     if(k){selKey=k;syncSel();dragging={type:"pt",key:k,su:points[k].u,sv:points[k].v,moved:false,snap:snap()};draw();return;}
   } else {
     const wi=hitWp(x,y);
-    if(wi>=0){dragging={type:"wp",i:wi,su:routes[selRoute][wi][0],sv:routes[selRoute][wi][1],moved:false,snap:snap()};return;}
+    if(wi>=0){const[su,sv]=wpXY(routes[selRoute][wi]);dragging={type:"wp",i:wi,su,sv,moved:false,snap:snap()};return;}
   }
   dragging={type:"pan",x,y,ox:view.ox,oy:view.oy}; c.classList.add("drag");
 });
@@ -143,7 +160,7 @@ addEventListener("mousemove",e=>{
   if(!dragging)return;
   if(dragging.type==="pan"){view.ox=dragging.ox+(e.clientX-dragging.x);view.oy=dragging.oy+(y-(dragging.y));draw();}
   else if(dragging.type==="pt"){dragging.moved=true;const[u,v]=toUV(x,y);points[dragging.key].u=+u.toFixed(4);points[dragging.key].v=+v.toFixed(4);draw();}
-  else if(dragging.type==="wp"){dragging.moved=true;const[u,v]=toUV(x,y);routes[selRoute][dragging.i]=[+u.toFixed(4),+v.toFixed(4)];draw();}
+  else if(dragging.type==="wp"){dragging.moved=true;const[u,v]=toUV(x,y);setWp(routes[selRoute][dragging.i],+u.toFixed(4),+v.toFixed(4));draw();}
 });
 let suppressClick=false;
 addEventListener("mouseup",()=>{
@@ -155,7 +172,7 @@ addEventListener("mouseup",()=>{
       else {points[k].u=dragging.su;points[k].v=dragging.sv;draw();}
     } else if(dragging.type==="wp"){
       if(confirm("Сохранить новое положение точки маршрута?")){pushUndo(dragging.snap);autosave();}
-      else {routes[selRoute][dragging.i]=[dragging.su,dragging.sv];draw();}
+      else {setWp(routes[selRoute][dragging.i],dragging.su,dragging.sv);draw();}
     }
   }
   dragging=null;c.classList.remove("drag");
@@ -173,7 +190,11 @@ c.addEventListener("click",e=>{
     else {p.u=ou;p.v=ov;draw();}
     setArm(false);                       // после постановки — обычный режим (пан карты)
   }
-  else if(mode==="routes"&&selRoute){if(hitWp(x,y)<0){pushUndo();routes[selRoute].push([+u.toFixed(4),+v.toFixed(4)]);draw();autosave();}}
+  else if(mode==="routes"&&selRoute&&hitWp(x,y)<0){
+    const wps=routes[selRoute],via=[+u.toFixed(4),+v.toFixed(4)];pushUndo();
+    if(wps.length>=2){const ns=nearestSeg(x,y,wps); if(ns.d<60)wps.splice(ns.i+1,0,via); else wps.push(via);}
+    else wps.push(via);
+    draw();autosave();}
   // иначе клик по пустому месту ничего не двигает — это режим перемещения карты
 });
 c.addEventListener("wheel",e=>{e.preventDefault();const x=e.offsetX,y=e.offsetY;const[u,v]=toUV(x,y);

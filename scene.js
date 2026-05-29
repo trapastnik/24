@@ -141,7 +141,10 @@ function buildRoutes(shot) {
   routesGroup.clear(); routes = [];
   for (const r of (shot.routes || [])) {
     const wp = LOC.routes[r.key]; if (!wp || wp.length < 2) continue;
-    const pts = wp.map(([u, v]) => uvToWorld(u, v, 0.6));
+    const pts = wp.map(p => {
+      const u = Array.isArray(p) ? p[0] : p.u, v = Array.isArray(p) ? p[1] : p.v;
+      return uvToWorld(u, v, 0.6);
+    });
     const curve = new THREE.CatmullRomCurve3(pts, false, "catmullrom", 0.4);
     const tube = new THREE.Mesh(
       new THREE.TubeGeometry(curve, 120, 0.35, 8, false),
