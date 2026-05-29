@@ -93,14 +93,19 @@ function wpR(){return Math.max(4, Math.min(13, 0.0026*IW*view.s));}
 function draw(){
   g.clearRect(0,0,c.width,c.height);
   if(ready) g.drawImage(img,view.ox,view.oy,IW*view.s,IH*view.s);
-  // routes
+  // routes — с НОМЕРАМИ точек (порядок маршрута)
   const wr=wpR();
   for(const [rk,wps] of Object.entries(routes)){
     const active = mode==="routes" && rk===selRoute;
     g.lineWidth=active?3:1.5; g.strokeStyle=active?"#E2412B":"rgba(226,65,43,.45)";
     g.beginPath(); wps.forEach(([u,v],i)=>{const[x,y]=toScr(u,v); i?g.lineTo(x,y):g.moveTo(x,y);}); g.stroke();
-    wps.forEach(([u,v])=>{const[x,y]=toScr(u,v);g.fillStyle=active?"#fff":"rgba(255,255,255,.5)";
-      g.beginPath();g.arc(x,y,active?wr:wr*0.8,0,7);g.fill();});
+    const fs=Math.max(11,Math.round(wr*1.5)), rB=Math.max(wr, fs*0.82);
+    wps.forEach(([u,v],i)=>{const[x,y]=toScr(u,v);
+      g.beginPath();g.arc(x,y,active?rB:rB*0.82,0,7);
+      g.fillStyle=active?"#E2412B":"rgba(160,33,40,.55)";g.fill();
+      g.lineWidth=1.5;g.strokeStyle="#fff";g.stroke();
+      g.fillStyle="#fff";g.font="bold "+(active?fs:Math.round(fs*0.82))+"px Arial";
+      g.textAlign="center";g.textBaseline="middle";g.fillText(i+1,x,y);});
   }
   // points
   const R=markerR();
