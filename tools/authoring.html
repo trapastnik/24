@@ -37,6 +37,7 @@
       <label>точка:</label>
       <select id="selPoint"></select>
       <button id="addPoint">＋ новая</button>
+      <button id="placeClick" title="поставить выбранную точку следующим кликом">⊕ кликом</button>
     </span>
     <span id="rtWrap" style="display:none">
       <label>маршрут:</label>
@@ -72,6 +73,8 @@ img.src=MAP;
 let view={s:1,ox:0,oy:0};         // screen = img_px*s + o
 let mode="points", selKey=null, selRoute=null;
 let dragging=null;                 // {type:'pan'|'pt'|'wp', ...}
+let armPlace=false;                // разовая постановка точки кликом
+function setArm(v){armPlace=v;const b=document.getElementById("placeClick");if(b)b.classList.toggle("on",v);c.style.cursor=v?"crosshair":"grab";}
 
 function resize(){c.width=innerWidth;c.height=innerHeight-46;draw();}
 addEventListener("resize",resize);
@@ -153,12 +156,15 @@ c.addEventListener("click",e=>{
   if(suppressClick){suppressClick=false;return;}
   if(dragging)return;
   const x=e.offsetX,y=e.offsetY,[u,v]=toUV(x,y);
-  if(mode==="points"&&selKey&&!hitPoint(x,y)){
+  // ставим точку кликом ТОЛЬКО когда явно «вооружены» (кнопка/новая точка) — разово
+  if(mode==="points"&&armPlace&&selKey&&!hitPoint(x,y)){
     const p=points[selKey],ou=p.u,ov=p.v;
     p.u=+u.toFixed(4);p.v=+v.toFixed(4);draw();
     if(!confirm(`Поставить «${p.name||selKey}» сюда?`)){p.u=ou;p.v=ov;draw();}
+    setArm(false);                       // после постановки — обычный режим (пан карты)
   }
   else if(mode==="routes"&&selRoute){if(hitWp(x,y)<0){routes[selRoute].push([+u.toFixed(4),+v.toFixed(4)]);draw();}}
+  // иначе клик по пустому месту ничего не двигает — это режим перемещения карты
 });
 c.addEventListener("wheel",e=>{e.preventDefault();const x=e.offsetX,y=e.offsetY;const[u,v]=toUV(x,y);
   view.s*=e.deltaY<0?1.15:1/1.15;view.s=Math.max(0.03,Math.min(8,view.s));
@@ -174,18 +180,19 @@ function fillSelects(){
   Object.keys(routes).forEach(k=>{const o=document.createElement("option");o.value=k;o.textContent=k;sr.appendChild(o);});
   selRoute=selRoute||Object.keys(routes)[0]; sr.value=selRoute;
 }
-document.getElementById("selPoint").onchange=e=>{selKey=e.target.value;
-  const p=points[selKey];const[,]=[0];centerOn(p.u,p.v);draw();};
+document.getElementById("selPoint").onchange=e=>{selKey=e.target.value;setArm(false);
+  const p=points[selKey];centerOn(p.u,p.v);draw();};
 document.getElementById("selRoute").onchange=e=>{selRoute=e.target.value;draw();};
-document.getElementById("mPoints").onclick=()=>{mode="points";togMode();};
-document.getElementById("mRoutes").onclick=()=>{mode="routes";togMode();};
+document.getElementById("mPoints").onclick=()=>{mode="points";setArm(false);togMode();};
+document.getElementById("mRoutes").onclick=()=>{mode="routes";setArm(false);togMode();};
+document.getElementById("placeClick").onclick=()=>setArm(!armPlace);
 function togMode(){document.getElementById("mPoints").classList.toggle("on",mode==="points");
   document.getElementById("mRoutes").classList.toggle("on",mode==="routes");
   document.getElementById("selWrap").style.display=mode==="points"?"":"none";
   document.getElementById("rtWrap").style.display=mode==="routes"?"":"none";draw();}
 document.getElementById("addPoint").onclick=()=>{const k=prompt("ключ новой точки (латиницей):");if(!k)return;
   const name=prompt("название (рус):")||k; const force=confirm("ВРК (жёлтый)? OK=да, Отмена=чёрный")?"vrk":"pg";
-  points[k]={u:0.5,v:0.5,name,force};fillSelects();selKey=k;syncSel();draw();};
+  points[k]={u:0.5,v:0.5,name,force};fillSelects();selKey=k;syncSel();setArm(true);draw();};
 document.getElementById("newRoute").onclick=()=>{const k=prompt("ключ маршрута:");if(!k)return;routes[k]=[];fillSelects();selRoute=k;document.getElementById("selRoute").value=k;draw();};
 document.getElementById("undoWp").onclick=()=>{if(routes[selRoute])routes[selRoute].pop();draw();};
 document.getElementById("clrRoute").onclick=()=>{if(routes[selRoute])routes[selRoute]=[];draw();};
