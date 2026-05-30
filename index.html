@@ -62,6 +62,19 @@
         <span class="tech-label">ГЗК · полный дикторский текст</span>
         <p id="vo-full"></p>
       </div>
+
+      <!-- ПАНЕЛЬ ОСВЕЩЕНИЯ — тумблеры и настройки эффекта день/ночь и теней -->
+      <div class="tech-ctrls" id="tech-ctrls">
+        <span class="tech-label">Освещение сцены</span>
+        <label class="ctrl-switch"><input type="checkbox" id="cx-light"><span>Свет по времени суток</span></label>
+        <div class="ctrl-row"><label for="cx-sunh">Высота Солнца</label>
+          <b class="ctrl-val" id="cx-sunh-v">28°</b><input type="range" id="cx-sunh" min="8" max="70" step="1"></div>
+        <div class="ctrl-row"><label for="cx-contrast">Контраст день/ночь</label>
+          <b class="ctrl-val" id="cx-contrast-v">100%</b><input type="range" id="cx-contrast" min="0" max="100" step="1"></div>
+        <label class="ctrl-switch"><input type="checkbox" id="cx-shadow"><span>Тени от зданий</span></label>
+        <div class="ctrl-row"><label for="cx-shadowp">Сила теней</label>
+          <b class="ctrl-val" id="cx-shadowp-v">45%</b><input type="range" id="cx-shadowp" min="0" max="100" step="1"></div>
+      </div>
     </aside>
 
     <!-- таймлайн событий — нижняя полоса под рабочим экраном -->

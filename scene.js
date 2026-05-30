@@ -62,9 +62,11 @@ function preloadModels() {
 
 // ----------------------------------------------------------------- three core
 const canvas = document.getElementById("gl");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;                 // фаза 2: тени от зданий (вкл из техзоны)
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(COL.ink);
@@ -72,14 +74,107 @@ scene.fog = new THREE.Fog(COL.ink, 220, 480);
 
 const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 3000);
 
-// lighting (for 3D models; map itself is unlit/basic)
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-const key = new THREE.DirectionalLight(0xfff1d6, 1.1);
-key.position.set(-60, 120, 40); scene.add(key);
+// lighting (for 3D models; map itself is unlit/basic — её яркость ведём тинтом)
+const amb = new THREE.AmbientLight(0xffffff, 0.6); scene.add(amb);
+const sun = new THREE.DirectionalLight(0xfff1d6, 1.1);     // = Солнце (позиция по астрономии)
+sun.position.set(-60, 120, 40); scene.add(sun);
 // мягкое IBL, чтобы латунь (шпиль/купола) читалась как золото без скайбокса
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.55;
+
+// ----------------------------------------------------------------- динамическое освещение (день/ночь по времени события)
+// Солнце над Петроградом (59.94°N) по ВРЕМЕНИ СОБЫТИЯ. В конце октября оно едва
+// встаёт (макс. ~17° в полдень), поэтому почти весь ролик — золотой час / сумерки / ночь.
+const PG_LAT = 59.9375;
+function sunPos(min) {                       // → { altDeg, az(рад от севера по часовой) }
+  const day = Math.floor(min / 1440), mm = ((min % 1440) + 1440) % 1440;
+  const doy = 297 + day, hh = mm / 60;       // 24 окт 1917 = 297-й день года
+  const R = Math.PI / 180;
+  const decl = -23.44 * Math.cos(R * (360 / 365 * (doy + 10)));
+  const B = R * (360 / 365 * (doy - 81));
+  const eot = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
+  const H = R * 15 * (hh + eot / 60 - 12);
+  const la = R * PG_LAT, de = R * decl;
+  const altDeg = Math.asin(Math.sin(la) * Math.sin(de) + Math.cos(la) * Math.cos(de) * Math.cos(H)) / R;
+  let az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(la) - Math.tan(de) * Math.cos(la)) + Math.PI;
+  return { altDeg, az };
+}
+// ключевые «стопы» неба по высоте Солнца (цвета лерпятся между ними)
+const C = (h) => new THREE.Color(h);
+const SKY = [
+  { a: -18, sunC: C(0x9ab0e6), sunI: 0.18, ambC: C(0x2a3a5c), ambI: 0.40, mapC: C(0x2c3858), bgC: C(0x05080f), fogC: C(0x05080f), fogN: 150, fogF: 430, env: 0.30 }, // глубокая ночь
+  { a:  -6, sunC: C(0x7a86b8), sunI: 0.35, ambC: C(0x3b4668), ambI: 0.50, mapC: C(0x515877), bgC: C(0x141d33), fogC: C(0x141d33), fogN: 170, fogF: 450, env: 0.38 }, // сумерки
+  { a:   0, sunC: C(0xe08a52), sunI: 0.95, ambC: C(0x5f6486), ambI: 0.55, mapC: C(0xa08376), bgC: C(0x3a3550), fogC: C(0x3a3550), fogN: 190, fogF: 460, env: 0.46 }, // у горизонта
+  { a:   6, sunC: C(0xffb368), sunI: 1.25, ambC: C(0x8fa0bd), ambI: 0.56, mapC: C(0xe9cfa8), bgC: C(0x6d6f84), fogC: C(0x6d6f84), fogN: 200, fogF: 470, env: 0.50 }, // золотой час
+  { a:  16, sunC: C(0xffe9c6), sunI: 1.45, ambC: C(0xaec2d6), ambI: 0.60, mapC: C(0xfbf3e2), bgC: C(0x9fb2c6), fogC: C(0x9fb2c6), fogN: 220, fogF: 490, env: 0.55 }, // низкий день
+];
+function gradeAt(altDeg) {
+  let lo = SKY[0], hi = SKY[SKY.length - 1];
+  if (altDeg <= lo.a) hi = lo;
+  else if (altDeg >= hi.a) lo = hi;
+  else for (let i = 0; i < SKY.length - 1; i++) if (altDeg >= SKY[i].a && altDeg <= SKY[i + 1].a) { lo = SKY[i]; hi = SKY[i + 1]; break; }
+  const t = hi.a === lo.a ? 0 : (altDeg - lo.a) / (hi.a - lo.a), L = (x, y) => x + (y - x) * t;
+  return {
+    sunC: new THREE.Color().lerpColors(lo.sunC, hi.sunC, t), sunI: L(lo.sunI, hi.sunI),
+    ambC: new THREE.Color().lerpColors(lo.ambC, hi.ambC, t), ambI: L(lo.ambI, hi.ambI),
+    mapC: new THREE.Color().lerpColors(lo.mapC, hi.mapC, t),
+    bgC: new THREE.Color().lerpColors(lo.bgC, hi.bgC, t),
+    fogC: new THREE.Color().lerpColors(lo.fogC, hi.fogC, t), fogN: L(lo.fogN, hi.fogN), fogF: L(lo.fogF, hi.fogF),
+    env: L(lo.env, hi.env),
+  };
+}
+// базовый (ровный) свет — к нему сводимся при выключенном эффекте / contrast=0
+const BASE = { sunC: C(0xfff1d6), sunI: 1.1, ambC: C(0xffffff), ambI: 0.6, mapC: C(0xffffff),
+  bgC: C(COL.ink), fogC: C(COL.ink), fogN: 220, fogF: 480, env: 0.55 };
+const BASE_POS = new THREE.Vector3(-60, 120, 40);
+const sunGoalPos = new THREE.Vector3().copy(BASE_POS);
+// настройки из техзоны (живая правка слайдерами/тумблерами)
+const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: false, shadowStr: 0.45 };
+
+function updateLighting(sm, dt, snap) {
+  const { altDeg, az } = sunPos(sm), g = gradeAt(altDeg);
+  const w = FX_SET.light ? FX_SET.contrast : 0;     // 0 = базовый свет, 1 = полный день/ночь
+  // позиция Солнца: высота не ниже «пола» (реальные ~17° в полдень слишком низки)
+  const ap = Math.max(altDeg, FX_SET.sunFloor) * Math.PI / 180;
+  const astro = new THREE.Vector3(Math.cos(ap) * Math.sin(az), Math.sin(ap), -Math.cos(ap) * Math.cos(az)).multiplyScalar(220);
+  sunGoalPos.copy(BASE_POS).lerp(astro, w);
+  const mixC = (a, b) => a.clone().lerp(b, w), mixN = (a, b) => a + (b - a) * w;
+  const k = snap ? 1 : 1 - Math.pow(0.05, dt);
+  sun.position.lerp(sunGoalPos, k);
+  sun.color.lerp(mixC(BASE.sunC, g.sunC), k); sun.intensity += (mixN(BASE.sunI, g.sunI) - sun.intensity) * k;
+  amb.color.lerp(mixC(BASE.ambC, g.ambC), k); amb.intensity += (mixN(BASE.ambI, g.ambI) - amb.intensity) * k;
+  if (mapPlane) mapPlane.material.color.lerp(mixC(BASE.mapC, g.mapC), k);
+  if (scene.background) scene.background.lerp(mixC(BASE.bgC, g.bgC), k);
+  if (scene.fog) { scene.fog.color.lerp(mixC(BASE.fogC, g.fogC), k);
+    scene.fog.near += (mixN(BASE.fogN, g.fogN) - scene.fog.near) * k; scene.fog.far += (mixN(BASE.fogF, g.fogF) - scene.fog.far) * k; }
+  scene.environmentIntensity += (mixN(BASE.env, g.env) - scene.environmentIntensity) * k;
+  // тени гаснут ночью: сила по РЕАЛЬНОЙ высоте Солнца (видны лишь когда оно над горизонтом)
+  if (FX_SET.shadows && shadowPlane) {
+    const dayF = Math.min(1, Math.max(0, (altDeg + 2) / 8));     // 0 при ≤−2°, 1 при ≥+6°
+    shadowPlane.material.opacity += (FX_SET.shadowStr * dayF - shadowPlane.material.opacity) * k;
+    sun.castShadow = dayF > 0.02;                                // ночью shadow-pass не считаем
+  }
+}
+
+// ----- фаза 2: тени от зданий (карта MeshBasic тени не принимает → плоскость-приёмник ShadowMaterial)
+let shadowPlane;
+function ensureShadowRig() {
+  if (shadowPlane) return;
+  const cam = sun.shadow.camera;
+  cam.left = -70; cam.right = 70; cam.top = 70; cam.bottom = -70; cam.near = 100; cam.far = 420;
+  cam.updateProjectionMatrix();
+  sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.6;
+  shadowPlane = new THREE.Mesh(new THREE.PlaneGeometry(PW, PD),
+    new THREE.ShadowMaterial({ opacity: FX_SET.shadowStr, depthWrite: false }));
+  shadowPlane.rotation.x = -Math.PI / 2; shadowPlane.position.y = 0.06;
+  shadowPlane.receiveShadow = true; shadowPlane.renderOrder = 2; scene.add(shadowPlane);
+  applyShadowSettings();
+}
+function applyShadowSettings() {
+  sun.castShadow = FX_SET.shadows;
+  if (shadowPlane) { shadowPlane.visible = FX_SET.shadows; shadowPlane.material.opacity = FX_SET.shadowStr; }
+}
 
 // ----------------------------------------------------------------- map plane
 let mapPlane;
@@ -180,7 +275,7 @@ function buildObjects() {
     if (modelCache[key]) {
       const model = modelCache[key].clone(true);
       model.traverse((c) => { if (c.isMesh) {
-        c.material = c.material.clone(); c.material.transparent = true;
+        c.material = c.material.clone(); c.material.transparent = true; c.castShadow = true;
         c.userData.emHex = c.material.emissive ? c.material.emissive.getHex() : 0;
         c.userData.emInt = c.material.emissiveIntensity ?? 1;
       }});
@@ -191,7 +286,7 @@ function buildObjects() {
       const fw = isBridge ? 2.0 : (hero ? 3.6 : 2.6), fh = isBridge ? 1.2 : (hero ? 7.0 : 4.2);
       const box = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, fw),
         new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.15, transparent: true }));
-      box.position.set(w.x, fh / 2, w.z); objGroup.add(box);
+      box.castShadow = true; box.position.set(w.x, fh / 2, w.z); objGroup.add(box);
       rec.mesh = box; rec.isModel = false;
     }
     objects[key] = rec;
@@ -576,10 +671,11 @@ function frame(now) {
 
   // часы/календарь по ВРЕМЕНИ СОБЫТИЯ (а не по минутам видео)
   if (s.s0 != null && s.s1 != null) {
-    const sm = s.s0 + (s.s1 - s.s0) * lp, dt = storyDT(sm);
-    hud.evTime.textContent = dt.time;
-    hud.evDate.textContent = dt.date;
-    hud.clock.innerHTML = "<b>" + dt.short + " · " + dt.time + "</b>";
+    const sm = s.s0 + (s.s1 - s.s0) * lp, sdt = storyDT(sm);
+    hud.evTime.textContent = sdt.time;
+    hud.evDate.textContent = sdt.date;
+    hud.clock.innerHTML = "<b>" + sdt.short + " · " + sdt.time + "</b>";
+    updateLighting(sm, dt, false);              // свет/цвет по времени суток (Солнце)
   }
   hud.fill.style.width = (t / SCN.duration * 100) + "%";
 
@@ -620,13 +716,34 @@ function resize() {
 }
 window.addEventListener("resize", resize);
 
+// ----------------------------------------------------------------- controls panel (техзона)
+function bindControls() {
+  const $ = (id) => document.getElementById(id);
+  const light = $("cx-light"), sunh = $("cx-sunh"), sunhV = $("cx-sunh-v"),
+        contrast = $("cx-contrast"), contrastV = $("cx-contrast-v"),
+        shadow = $("cx-shadow"), shp = $("cx-shadowp"), shpV = $("cx-shadowp-v");
+  if (!light) return;
+  light.checked = FX_SET.light;
+  sunh.value = FX_SET.sunFloor; sunhV.textContent = FX_SET.sunFloor + "°";
+  contrast.value = Math.round(FX_SET.contrast * 100); contrastV.textContent = contrast.value + "%";
+  shadow.checked = FX_SET.shadows;
+  shp.value = Math.round(FX_SET.shadowStr * 100); shpV.textContent = shp.value + "%";
+  light.addEventListener("change", () => { FX_SET.light = light.checked; });
+  sunh.addEventListener("input", () => { FX_SET.sunFloor = +sunh.value; sunhV.textContent = sunh.value + "°"; });
+  contrast.addEventListener("input", () => { FX_SET.contrast = +contrast.value / 100; contrastV.textContent = contrast.value + "%"; });
+  shadow.addEventListener("change", () => { FX_SET.shadows = shadow.checked; applyShadowSettings(); });
+  shp.addEventListener("input", () => { FX_SET.shadowStr = +shp.value / 100; shpV.textContent = shp.value + "%"; applyShadowSettings(); });
+}
+
 // ----------------------------------------------------------------- boot
 function boot() {
-  resize(); buildTicks();
+  resize(); buildTicks(); bindControls();
   const s0 = SCN.shots[0]; setFraming(s0);
   camera.position.copy(camGoalPos); camTarget.copy(camGoalLook); camera.lookAt(camTarget);
   buildObjects();                                   // боксы-заглушки показываются сразу
   applyShotToObjects(shotIndexAt(t));
+  ensureShadowRig();                                // shadow-плоскость + камера теней
+  updateLighting(s0.s0 ?? 720, 0, true);            // сразу выставить свет под 1-й кадр
   // когда .glb догрузятся — пересобираем объекты (модели вместо боксов)
   preloadModels().then(() => {
     buildObjects();
