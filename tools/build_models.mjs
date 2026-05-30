@@ -104,6 +104,21 @@ function bowPrism(len, h, w) {
   return { pos, nrm, idx };
 }
 
+// фронтон/гейбл: треугольное сечение в XY (основание w, вершина h), выдавлено по Z на d
+function gable(w, h, d) {
+  const x = w / 2, z = d / 2, pos = [], nrm = [], idx = [];
+  const A = [-x, 0, z], B = [x, 0, z], P = [0, h, z];        // фронт (+Z)
+  const A2 = [-x, 0, -z], B2 = [x, 0, -z], P2 = [0, h, -z];  // тыл (−Z)
+  const tri = (a, b, c, n) => { const b0 = pos.length / 3; for (const v of [a, b, c]) { pos.push(...v); nrm.push(...n); } idx.push(b0, b0 + 1, b0 + 2); };
+  const quad = (a, b, c, dd, n) => { const b0 = pos.length / 3; for (const v of [a, b, c, dd]) { pos.push(...v); nrm.push(...n); } idx.push(b0, b0 + 1, b0 + 2, b0, b0 + 2, b0 + 3); };
+  tri(A, B, P, [0, 0, 1]);
+  tri(B2, A2, P2, [0, 0, -1]);
+  quad(A2, B2, B, A, [0, -1, 0]);        // низ
+  quad(A2, A, P, P2, [-0.7, 0.7, 0]);    // левый скат
+  quad(B, B2, P2, P, [0.7, 0.7, 0]);     // правый скат
+  return { pos, nrm, idx };
+}
+
 // ----------------------------------------------------------------- сборка модели
 class Model {
   constructor(name) { this.name = name; this.parts = new Map(); }
@@ -130,22 +145,28 @@ class Model {
 // единицы условные; во вьюере модель нормируется по высоте. база ≈ y=0.
 
 function smolny() {
-  // Смольный собор: квадратный объём + центральный купол на барабане + 4 угловые главки
+  // Смольный институт (Институт благородных девиц, арх. Кваренги) — ШТАБ восстания,
+  // НЕ собор. Длинный классицистический корпус + центральный 8-колонный портик с
+  // фронтоном + торцевые ризалиты. Куполов нет. Стена — камень, колонны/карниз — белые.
   const m = new Model("smolny");
-  m.add(box(7, 5, 7), { mat: "paper", pos: [0, 2.5, 0] });
-  m.add(box(7.6, 1, 7.6), { mat: "graphite", pos: [0, 5.2, 0] });      // карниз/кровля
-  // центральная глава
-  m.add(cyl(2, 2.2, 3, 12), { mat: "paper", pos: [0, 5.7, 0] });        // барабан
-  m.add(dome(2.2, 3.2, 14, 6), { mat: "brass", pos: [0, 8.7, 0] });     // купол
-  m.add(cyl(0.25, 0.4, 1.2, 8), { mat: "brass", pos: [0, 11.9, 0] });   // фонарик
-  m.add(cyl(0, 0.12, 1.4, 6), { mat: "brass", pos: [0, 13.1, 0] });     // главка
-  // 4 угловые башенки
-  for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-    const px = sx * 2.6, pz = sz * 2.6;
-    m.add(cyl(0.8, 0.9, 2, 10), { mat: "paper", pos: [px, 5.7, pz] });
-    m.add(dome(0.95, 1.4, 10, 5), { mat: "brass", pos: [px, 7.7, pz] });
-    m.add(cyl(0, 0.07, 0.8, 6), { mat: "brass", pos: [px, 9.1, pz] });
+  const L = 24, H = 5, D = 6, base = 0.8;
+  m.add(box(L, base, D + 0.4), { mat: "graphite", pos: [0, base / 2, 0] });        // цоколь
+  m.add(box(L, H, D), { mat: "stone", pos: [0, base + H / 2, 0] });                 // главный корпус (3 этажа)
+  m.add(box(L + 0.5, 0.6, D + 0.4), { mat: "paper", pos: [0, base + H, 0] });       // венчающий карниз
+  m.add(box(L, 0.5, D), { mat: "graphite", pos: [0, base + H + 0.35, 0] });         // кровля
+  // торцевые ризалиты
+  for (const sx of [-1, 1]) {
+    m.add(box(2.6, H + 0.4, D + 0.5), { mat: "stone", pos: [sx * 10.7, base + (H + 0.4) / 2, 0] });
+    m.add(box(2.9, 0.5, D + 0.7), { mat: "graphite", pos: [sx * 10.7, base + H + 0.55, 0] });
   }
+  // центральный портик (выступает вперёд +Z)
+  const fz = D / 2;
+  m.add(box(9, H + 0.6, 1.2), { mat: "stone", pos: [0, base + (H + 0.6) / 2, fz - 0.2] }); // ризалит за колоннами
+  for (let i = -3.5; i <= 3.5; i += 1)                                              // 8 колонн
+    m.add(cyl(0.32, 0.34, H + 0.2, 8), { mat: "paper", pos: [i, base, fz + 1.4] });
+  m.add(box(8.6, 0.9, 1.6), { mat: "paper", pos: [0, base + H + 0.3, fz + 1.4] });  // антаблемент
+  m.add(gable(8.8, 1.7, 1.6), { mat: "paper", pos: [0, base + H + 0.75, fz + 1.4] }); // фронтон
+  m.add(box(2.4, H - 0.4, 0.3), { mat: "graphite", pos: [0, base, fz + 0.95] });    // парадный портал (тёмный проём)
   return m;
 }
 
