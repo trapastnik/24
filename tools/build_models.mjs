@@ -198,6 +198,17 @@ class Model {
 // ----------------------------------------------------------------- ориентиры
 // единицы условные; во вьюере модель нормируется по высоте. база ≈ y=0.
 
+// классицистический рельеф: выступающий цоколь + ритмический ряд пилястр по фасадам (+Z/−Z)
+function relief(m, { w, d, h, y0 = 0, pil = "paper", base = "graphite", plinth = true, step = 2.4 }) {
+  const fz = d / 2 + 0.1;
+  if (plinth) m.add(box(w + 0.5, 0.7, d + 0.5), { mat: base, pos: [0, y0 + 0.35, 0] });
+  const n = Math.max(2, Math.round(w / step));
+  for (let i = 0; i <= n; i++) {
+    const x = -w / 2 + (w * i) / n;
+    for (const z of [fz, -fz]) m.add(box(0.45, h - 0.5, 0.3), { mat: pil, pos: [x, y0 + (h - 0.5) / 2 + 0.35, z] });
+  }
+}
+
 function smolny() {
   // Смольный институт (Институт благородных девиц, арх. Кваренги) — ШТАБ восстания,
   // НЕ собор. Длинный классицистический корпус + центральный 8-колонный портик с
@@ -206,6 +217,7 @@ function smolny() {
   const L = 24, H = 5, D = 6, base = 0.8;
   m.add(box(L, base, D + 0.4), { mat: "graphite", pos: [0, base / 2, 0] });        // цоколь
   m.add(box(L, H, D), { mat: "facadePale", pos: [0, base + H / 2, 0] });            // главный корпус (3 этажа, окна)
+  relief(m, { w: L, d: D, h: H, y0: base, plinth: false });                          // пилястры по фасаду
   m.add(box(L + 0.5, 0.6, D + 0.4), { mat: "paper", pos: [0, base + H, 0] });       // венчающий карниз
   m.add(box(L, 0.5, D), { mat: "graphite", pos: [0, base + H + 0.35, 0] });         // кровля
   // торцевые ризалиты
@@ -228,6 +240,7 @@ function winter() {
   // Зимний дворец: длинный низкий барочный блок, чуть выше центр, парапет + статуи
   const m = new Model("winter");
   m.add(box(20, 5, 6), { mat: "facadePale", pos: [0, 2.5, 0] });        // главный корпус (окна)
+  relief(m, { w: 20, d: 6, h: 5 });                                     // цоколь + пилястры
   m.add(box(7, 6.2, 6.4), { mat: "facadePale", pos: [0, 3.1, 0] });     // центральный ризалит
   m.add(box(20.6, 0.7, 6.6), { mat: "brass", pos: [0, 5.2, 0] });       // карниз
   m.add(box(7.4, 0.7, 6.8), { mat: "brass", pos: [0, 6.6, 0] });        // карниз центра
@@ -261,6 +274,7 @@ function mariinsky() {
   // Мариинский дворец: классицистический блок + центральный портик с колоннами + аттик
   const m = new Model("mariinsky");
   m.add(box(14, 5.5, 6), { mat: "facadeStone", pos: [0, 2.75, 0] });    // корпус (окна)
+  relief(m, { w: 14, d: 6, h: 5.5 });                                   // цоколь + пилястры
   m.add(box(14.4, 0.6, 6.4), { mat: "paper", pos: [0, 5.6, 0] });       // карниз
   m.add(box(14, 0.5, 6.2), { mat: "graphite", pos: [0, 6.1, 0] });      // кровля
   m.add(box(6.5, 4.6, 1.2), { mat: "facadeStone", pos: [0, 2.3, 3.2] }); // ризалит-портик
@@ -275,6 +289,7 @@ function tauride() {
   // Таврический дворец: центральный купол + 6-колонный портик + низкие крылья
   const m = new Model("tauride");
   m.add(box(8, 5, 6), { mat: "facadeStone", pos: [0, 2.5, 0] });        // центр (окна)
+  relief(m, { w: 8, d: 6, h: 5 });                                      // цоколь + пилястры
   m.add(box(6, 4, 5), { mat: "facadeStone", pos: [-9, 2, 0] });         // левое крыло
   m.add(box(6, 4, 5), { mat: "facadeStone", pos: [9, 2, 0] });          // правое крыло
   m.add(box(4, 4, 4.5), { mat: "facadeStone", pos: [-5.5, 2, 0] });     // галерея
@@ -371,8 +386,9 @@ function writeGLB(model) {
           name: part.mat, doubleSided: true,
           pbrMetallicRoughness: { baseColorFactor: linearRGBA(def.tint), metallicFactor: 1, roughnessFactor: 1,
             baseColorTexture: { index: TEX.base }, metallicRoughnessTexture: { index: TEX.mr } },
-          normalTexture: { index: TEX.norm, scale: 1.0 },
+          normalTexture: { index: TEX.norm, scale: 1.2 },
           emissiveTexture: { index: TEX.emit }, emissiveFactor: [1, 1, 1],
+          extensions: { KHR_materials_emissive_strength: { emissiveStrength: 2.4 } }, // окна светятся ночью
         };
       } else {
         mat = { name: part.mat, doubleSided: true, pbrMetallicRoughness: { baseColorFactor: linearRGBA(def.hex), metallicFactor: def.metallic, roughnessFactor: def.roughness } };
@@ -388,7 +404,7 @@ function writeGLB(model) {
     meshes: [{ name: model.name, primitives }],
     materials, accessors, bufferViews, buffers: [{ byteLength: byteLen }],
   };
-  if (usesTex) { gltf.images = images; gltf.textures = textures; gltf.samplers = samplers; }
+  if (usesTex) { gltf.images = images; gltf.textures = textures; gltf.samplers = samplers; gltf.extensionsUsed = ["KHR_materials_emissive_strength"]; }
   // упаковка GLB
   const bin = Buffer.concat(chunks);
   let json = Buffer.from(JSON.stringify(gltf), "utf8");
