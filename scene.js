@@ -242,7 +242,7 @@ const BASE = { sunC: C(0xfff1d6), sunI: 1.1, ambC: C(0xffffff), ambI: 0.6, mapC:
 const BASE_POS = new THREE.Vector3(-60, 120, 40);
 const sunGoalPos = new THREE.Vector3().copy(BASE_POS);
 // настройки из техзоны (живая правка слайдерами/тумблерами)
-const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, nightLights: true, cityCut: 1.4, pads: false };
+const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, nightLights: true, cityCut: 1.4, pads: false, city: true };
 let nightF = 0;     // 0 день … 1 ночь — обновляется в updateLighting, читается водой/прочими
 
 function updateLighting(sm, dt, snap) {
@@ -997,6 +997,8 @@ function bindControls() {
   }
   const pads = $("cx-pads");
   if (pads) { pads.checked = FX_SET.pads; pads.addEventListener("change", () => { FX_SET.pads = pads.checked; }); }
+  const city = $("cx-city");
+  if (city) { city.checked = FX_SET.city; city.addEventListener("change", () => { FX_SET.city = city.checked; if (cityMassing) cityMassing.visible = FX_SET.city; }); }
   const postCx = $("cx-post");
   if (postCx) postCx.addEventListener("change", () => { post.enabled = postCx.checked; syncPostUI(); });
   syncPostUI();
@@ -1070,6 +1072,7 @@ function rebuildCityMassing() {
   const mat = new THREE.MeshStandardMaterial({ color: 0x2f343d, roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide });
   cityMassing = new THREE.Mesh(merged, mat);
   cityMassing.castShadow = true; cityMassing.receiveShadow = true; cityMassing.renderOrder = 0;
+  cityMassing.visible = FX_SET.city;                  // тумблер «3D-город» в техзоне
   scene.add(cityMassing);
   console.log(`%cМТК24 · массинг: ${geoms.length} зданий · вырез ${FX_SET.cityCut.toFixed(1)} ед (на воде −${skipWater})`, "color:#9fb2c6");
 }
@@ -1125,7 +1128,10 @@ function buildWater() {
   }
   if (!geoms.length) return;
   const merged = mergeGeometries(geoms, false); geoms.forEach((g) => g.dispose());
-  waterMesh = new THREE.Mesh(merged, waterMat); waterMesh.position.y = 0.06; waterMesh.renderOrder = 1;
+  waterMesh = new THREE.Mesh(merged, waterMat); waterMesh.position.y = 0.05;
+  // вода — самый НИЖНИЙ слой: depthWrite=false + renderOrder=-1, поэтому непрозрачные
+  // объекты (массинг/модели) перекрывают её по глубине, а спрайты/маркеры/пады рисуются поверх.
+  waterMesh.renderOrder = -1;
   scene.add(waterMesh);
   console.log(`%cМТК24 · вода Невы: ${geoms.length} полигонов (из антикварной карты, uv)`, "color:#6db4d8");
 }
