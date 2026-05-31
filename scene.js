@@ -130,7 +130,7 @@ const BASE = { sunC: C(0xfff1d6), sunI: 1.1, ambC: C(0xffffff), ambI: 0.6, mapC:
 const BASE_POS = new THREE.Vector3(-60, 120, 40);
 const sunGoalPos = new THREE.Vector3().copy(BASE_POS);
 // настройки из техзоны (живая правка слайдерами/тумблерами)
-const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: false, shadowStr: 0.45 };
+const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, pads: false };
 
 function updateLighting(sm, dt, snap) {
   const { altDeg, az } = sunPos(sm), g = gradeAt(altDeg);
@@ -240,12 +240,12 @@ const HERO = ["smolny", "winter", "fortress", "mariinsky", "tauride"];
 const DIM_OP = 0.22, DIM_MODEL_OP = 0.3;     // прозрачность «не в фокусе»
 
 function addForcePad(w, size) {
-  // плашка-подсветка в цвете силы под 3D-моделью (цвет/яркость задаёт updateObjects)
+  // плашка-подсветка в цвете силы под 3D-моделью (видимость — тумблер FX_SET.pads)
   const mat = new THREE.MeshStandardMaterial({
     color: COL.vrk, emissive: COL.vrk, emissiveIntensity: 0.3,
     roughness: 0.6, metalness: 0.0, transparent: true, opacity: 0.4 });
   const pad = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.6, size * 0.6, 0.4, 28), mat);
-  pad.position.set(w.x, 0.2, w.z); objGroup.add(pad); return pad;
+  pad.position.set(w.x, 0.2, w.z); pad.visible = FX_SET.pads; objGroup.add(pad); return pad;
 }
 // индекс всех объектов сценария: какая сила, каким кадром (и при каком lp) захвачен
 function objectIndex() {
@@ -317,16 +317,21 @@ function updateObjects(lp, time) {
     let pulseE = null;
     if (act && o.pulse) { const fast = o.pulse === "fast"; pulseE = 0.3 + 0.6 * Math.abs(Math.sin(time * (fast ? 7 : 3.2))); }
     if (o.isModel) {
-      const op = act ? 1.0 : DIM_MODEL_OP;
+      const op = act ? 1.0 : DIM_MODEL_OP, pads = FX_SET.pads;
+      // c кругами: модель — только красная при захвате; без кругов: подсветка принадлежности эмиссией
       o.mesh.traverse((c) => { if (!c.isMesh) return; const m = c.material; setOpacity(m, op);
         if (m.emissive) {
-          if (red) { m.emissive.setHex(COL.redLight); m.emissiveIntensity = act ? 0.5 : 0.22; }
+          if (red) { m.emissive.setHex(COL.redLight); m.emissiveIntensity = pulseE != null ? pulseE : (act ? 0.5 : 0.22); }
+          else if (!pads && act) { m.emissive.setHex(force === "vrk" ? COL.vrk : COL.pg); m.emissiveIntensity = pulseE != null ? pulseE : 0.28; }
           else { m.emissive.setHex(c.userData.emHex); m.emissiveIntensity = c.userData.emInt; }
         }});
-      if (o.pad) { const pm = o.pad.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.graphite);
-        pm.color.setHex(col); pm.emissive.setHex(col);
-        pm.emissiveIntensity = pulseE != null ? pulseE : (act ? (red ? 0.6 : force === "vrk" ? 0.6 : 0.25) : (red ? 0.3 : 0.12));
-        pm.opacity = act ? 0.5 : 0.18;
+      if (o.pad) {
+        o.pad.visible = pads;
+        if (pads) { const pm = o.pad.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.graphite);
+          pm.color.setHex(col); pm.emissive.setHex(col);
+          pm.emissiveIntensity = pulseE != null ? pulseE : (act ? (red ? 0.6 : force === "vrk" ? 0.6 : 0.25) : (red ? 0.3 : 0.12));
+          pm.opacity = act ? 0.5 : 0.18;
+        }
       }
     } else {
       const m = o.mesh.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.pg);
@@ -721,18 +726,20 @@ function bindControls() {
   const $ = (id) => document.getElementById(id);
   const light = $("cx-light"), sunh = $("cx-sunh"), sunhV = $("cx-sunh-v"),
         contrast = $("cx-contrast"), contrastV = $("cx-contrast-v"),
-        shadow = $("cx-shadow"), shp = $("cx-shadowp"), shpV = $("cx-shadowp-v");
+        shadow = $("cx-shadow"), shp = $("cx-shadowp"), shpV = $("cx-shadowp-v"), pads = $("cx-pads");
   if (!light) return;
   light.checked = FX_SET.light;
   sunh.value = FX_SET.sunFloor; sunhV.textContent = FX_SET.sunFloor + "°";
   contrast.value = Math.round(FX_SET.contrast * 100); contrastV.textContent = contrast.value + "%";
   shadow.checked = FX_SET.shadows;
   shp.value = Math.round(FX_SET.shadowStr * 100); shpV.textContent = shp.value + "%";
+  if (pads) pads.checked = FX_SET.pads;
   light.addEventListener("change", () => { FX_SET.light = light.checked; });
   sunh.addEventListener("input", () => { FX_SET.sunFloor = +sunh.value; sunhV.textContent = sunh.value + "°"; });
   contrast.addEventListener("input", () => { FX_SET.contrast = +contrast.value / 100; contrastV.textContent = contrast.value + "%"; });
   shadow.addEventListener("change", () => { FX_SET.shadows = shadow.checked; applyShadowSettings(); });
   shp.addEventListener("input", () => { FX_SET.shadowStr = +shp.value / 100; shpV.textContent = shp.value + "%"; applyShadowSettings(); });
+  if (pads) pads.addEventListener("change", () => { FX_SET.pads = pads.checked; });
 }
 
 // ----------------------------------------------------------------- boot
