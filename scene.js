@@ -41,9 +41,28 @@ const MODEL_CFG = MODELS.cfg;
 const MODEL_DIR = MODELS.dir;
 const modelCache = {};        // key → нормированный THREE.Group (шаблон для clone)
 let modelsReady = false;
+// статус загрузки каждой модели (для окна статуса в техзоне)
+const modelStatus = {};        // key → { state:'wait'|'load'|'ok'|'err', file, pct }
+function renderLoadStatus() {
+  const box = document.getElementById("ls-list"); if (!box) return;
+  const keys = Object.keys(MODEL_CFG);
+  box.innerHTML = keys.map((k) => {
+    const s = modelStatus[k] || { state: "wait" };
+    let icon = "·", cls = "wait";
+    if (s.state === "ok") { icon = "✓"; cls = "ok"; }
+    else if (s.state === "err") { icon = "✗"; cls = "err"; }
+    else if (s.state === "load") { icon = s.pct != null ? s.pct + "%" : "…"; cls = "load"; }
+    return `<div class="ls-row ${cls}"><span class="ls-i">${icon}</span><span class="ls-k">${k}</span><span class="ls-f">${s.file || MODEL_CFG[k].file}</span></div>`;
+  }).join("");
+  const ok = keys.filter((k) => modelStatus[k] && modelStatus[k].state === "ok").length;
+  const err = keys.filter((k) => modelStatus[k] && modelStatus[k].state === "err").length;
+  const lbl = document.getElementById("ls-label");
+  if (lbl) lbl.textContent = `статус моделей · ${ok}/${keys.length}` + (err ? ` · ошибок: ${err}` : "");
+}
 function preloadModels() {
   const loader = new GLTFLoader();
   const jobs = Object.entries(MODEL_CFG).map(([key, cfg]) => new Promise((res) => {
+    modelStatus[key] = { state: "load", file: cfg.file, pct: null };
     loader.load(MODEL_DIR + cfg.file, (gltf) => {
       const g = gltf.scene;
       // нормировка: центр по XZ, база на y=0, масштаб по горизонтальному габариту
@@ -54,9 +73,11 @@ function preloadModels() {
       const root = new THREE.Group(); root.add(g);
       root.scale.setScalar(s); root.rotation.y = cfg.yaw || 0;
       modelCache[key] = root;
-      res();
-    }, undefined, (err) => { console.warn("МТК24: модель не загрузилась", cfg.file, err); res(); });
+      modelStatus[key].state = "ok"; renderLoadStatus(); res();
+    }, (ev) => { if (ev && ev.lengthComputable) { modelStatus[key].pct = Math.round(ev.loaded / ev.total * 100); renderLoadStatus(); } },
+       (err) => { console.warn("МТК24: модель не загрузилась", cfg.file, err); modelStatus[key].state = "err"; renderLoadStatus(); res(); });
   }));
+  renderLoadStatus();
   return Promise.all(jobs).then(() => { modelsReady = true; });
 }
 
