@@ -823,6 +823,8 @@ function tick(dt, snap) {
   updateObjects(lp, animT);
   updateRoutes(lp);
   updateFx(lp, animT);
+  if (waterMesh) { const u = waterMat.uniforms; u.time.value = animT;   // Ф9: рябь/блик воды
+    u.sunDir.value.copy(sun.position).normalize(); u.camPos.value.copy(camera.position); }
   if (flashEnergy > 0) flashEnergy = Math.max(0, flashEnergy - dt * 2.4);
   if (hud.flash) hud.flash.style.opacity = flashEnergy * flashEnergy;
 
@@ -1052,9 +1054,52 @@ function rebuildCityMassing() {
   scene.add(cityMassing);
   console.log(`%cМТК24 · массинг: ${geoms.length} зданий · вырез ${FX_SET.cityCut.toFixed(1)} ед (на воде −${skipWater})`, "color:#9fb2c6");
 }
+// ----------------------------------------------------------------- Ф9: вода Невы (полигоны OSM)
+// Кастомный шейдер: тёмная база + Fresnel (светлее к краю обзора) + рябь (детерминир. по animT)
+// + бегущий солнечный блик. Привязка — та же TPS (geoToWorld), что и массинг.
+const waterMat = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false,
+  uniforms: {
+    time: { value: 0 }, sunDir: { value: new THREE.Vector3(0, 1, 0) }, camPos: { value: new THREE.Vector3() },
+    base: { value: new THREE.Color(0x0a1622) }, hi: { value: new THREE.Color(0x33506e) }, sunCol: { value: new THREE.Color(0xfff0d0) },
+  },
+  vertexShader: `varying vec3 vW; void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vW = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
+  fragmentShader: `varying vec3 vW; uniform float time; uniform vec3 sunDir, camPos, base, hi, sunCol;
+    void main(){ vec2 p = vW.xz;
+      float nx = sin(p.x*0.25 + time*0.6) + sin((p.x+p.y)*0.17 + time*0.8)*0.7;
+      float nz = sin(p.y*0.31 - time*0.5) + sin((p.x-p.y)*0.21 - time*0.7)*0.7;
+      vec3 nrm = normalize(vec3(nx*0.05, 1.0, nz*0.05));
+      vec3 view = normalize(camPos - vW);
+      float fres = pow(1.0 - max(dot(nrm, view), 0.0), 3.0);
+      vec3 col = mix(base, hi, fres);
+      vec3 sd = normalize(sunDir);
+      float spec = pow(max(dot(reflect(-sd, nrm), view), 0.0), 90.0) * max(sd.y, 0.0);
+      col += sunCol * spec * 1.6;
+      gl_FragColor = vec4(col, 0.94); }`,
+});
+let waterMesh = null;
+function buildWater() {
+  if (waterMesh || !GEOREG || !cityWater || !cityWater.length) return;
+  const geoms = [];
+  for (const w of cityWater) {
+    const ring = w.ring; if (ring.length < 5) continue;
+    const p0 = geoToWorld(w.bb[0], w.bb[1], 0), p1 = geoToWorld(w.bb[2], w.bb[3], 0);
+    if (!p0 || !p1 || Math.hypot(p1.x - p0.x, p1.z - p0.z) < 4) continue;     // пропустить мелкие пруды
+    const pts = [];
+    for (const c of ring) { const wp = geoToWorld(c[0], c[1], 0); if (wp) pts.push(new THREE.Vector2(wp.x, -wp.z)); }
+    if (pts.length < 4) continue;
+    const g = new THREE.ShapeGeometry(new THREE.Shape(pts)); g.rotateX(-Math.PI / 2); g.deleteAttribute("uv");
+    geoms.push(g);
+  }
+  if (!geoms.length) return;
+  const merged = mergeGeometries(geoms, false); geoms.forEach((g) => g.dispose());
+  waterMesh = new THREE.Mesh(merged, waterMat); waterMesh.position.y = 0.06; waterMesh.renderOrder = 1;
+  scene.add(waterMesh);
+  console.log(`%cМТК24 · вода Невы: ${geoms.length} полигонов`, "color:#6db4d8");
+}
 async function buildCityMassing() {
   if (cityMassing) return;
-  if (await loadCityData()) rebuildCityMassing();
+  if (await loadCityData()) { rebuildCityMassing(); buildWater(); }
 }
 
 // ----------------------------------------------------------------- boot
