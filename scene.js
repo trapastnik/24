@@ -29,9 +29,9 @@ function uvToWorld(u, v, y = 0) {
   return new THREE.Vector3((u - 0.5) * PW, y, (v - 0.5) * PD);
 }
 
-// гео-регистрация OSM(lon,lat)→[u,v]→мир (Ф0, data/geo_register.js) — для массинга/воды/дорог
+// гео-регистрация OSM(lon,lat)→[u,v]→мир (Ф0, data/geo_register.js) — для массинга/дорог
 const GEOREG = window.MTK24_GEOREG || null;
-function geoToWorld(lon, lat, y = 0) {
+function geoToUv(lon, lat) {                    // OSM(lon,lat) → [u,v] карты
   if (!GEOREG) return null;
   let u, v;
   if (GEOREG.type === "tps") {                 // thin-plate spline — точно через все опорные точки
@@ -49,7 +49,11 @@ function geoToWorld(lon, lat, y = 0) {
     u = GEOREG.U[0] * lon + GEOREG.U[1] * lat + GEOREG.U[2];
     v = GEOREG.V[0] * lon + GEOREG.V[1] * lat + GEOREG.V[2];
   }
-  return uvToWorld(u, v, y);
+  return [u, v];
+}
+function geoToWorld(lon, lat, y = 0) {
+  const uv = geoToUv(lon, lat);
+  return uv ? uvToWorld(uv[0], uv[1], y) : null;
 }
 
 // ----------------------------------------------------------------- data
@@ -239,6 +243,7 @@ const BASE_POS = new THREE.Vector3(-60, 120, 40);
 const sunGoalPos = new THREE.Vector3().copy(BASE_POS);
 // настройки из техзоны (живая правка слайдерами/тумблерами)
 const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, nightLights: true, cityCut: 1.4, pads: false };
+let nightF = 0;     // 0 день … 1 ночь — обновляется в updateLighting, читается водой/прочими
 
 function updateLighting(sm, dt, snap) {
   const { altDeg, az } = sunPos(sm), g = gradeAt(altDeg);
@@ -251,6 +256,7 @@ function updateLighting(sm, dt, snap) {
   const k = snap ? 1 : 1 - Math.pow(0.05, dt);
   sun.position.lerp(sunGoalPos, k);
   const nf = Math.min(1, Math.max(0, (6 - altDeg) / 12));   // Ф2: 0 день(+6°)…1 ночь(−6°)
+  nightF = nf;                                              // → вода (отражение неба/луны)
   if (window.MTK24_AUDIO) window.MTK24_AUDIO.setNight(nf);   // звук: ветер гуще ночью
   const nightDim = 1 - 0.6 * nf;                            // ночью топим базовый свет — драма от локальных источников
   sun.color.lerp(mixC(BASE.sunC, g.sunC), k); sun.intensity += (mixN(BASE.sunI, g.sunI) * nightDim - sun.intensity) * k;
@@ -834,8 +840,6 @@ function tick(dt, snap) {
   updateObjects(lp, animT);
   updateRoutes(lp);
   updateFx(lp, animT);
-  if (waterMesh) { const u = waterMat.uniforms; u.time.value = animT;   // Ф9: рябь/блик воды
-    u.sunDir.value.copy(sun.position).normalize(); u.camPos.value.copy(camera.position); }
   if (flashEnergy > 0) flashEnergy = Math.max(0, flashEnergy - dt * 2.4);
   if (hud.flash) hud.flash.style.opacity = flashEnergy * flashEnergy;
 
@@ -848,6 +852,8 @@ function tick(dt, snap) {
     updateLighting(sm, dt, snap);               // свет/цвет по времени суток (Солнце)
     updateNightLights(sm, lp, animT, snap);     // Ф2: локальные источники (свет «живёт» в зданиях)
   }
+  if (waterMesh) { const u = waterMat.uniforms; u.time.value = animT;   // Ф9: рябь/блик/луна воды
+    u.sunDir.value.copy(sun.position).normalize(); u.camPos.value.copy(camera.position); u.nightF.value = nightF; }
   hud.fill.style.width = (t / SCN.duration * 100) + "%";
   post.render(animT);
 }
@@ -1015,15 +1021,15 @@ async function loadCityData() {            // фетч контуров + пол
   try { cityData = await (await fetch("./data/petrograd_buildings.json")).json(); }
   catch (e) { console.warn("МТК24: контуры зданий не загрузились", e); return false; }
   cityWater = [];
-  try {
-    const osm = await (await fetch("./data/petrograd_osm.json")).json();
-    if (osm && osm.water) for (const wf of osm.water) for (const ring of (wf.rings || [])) {
-      if (ring.length < 4) continue;
+  try {                                              // вода ИЗ АНТИКВАРНОЙ КАРТЫ в [u,v] — extract_water_map.py
+    const wd = await (await fetch("./data/petrograd_water_map.json")).json();   // {space:"uv", water:[{rings:[outer,...holes]}]}
+    for (const f of (wd.water || [])) {
+      const o = f.rings && f.rings[0]; if (!o || o.length < 4) continue;
       let a = 1e9, b2 = 1e9, c2 = -1e9, d = -1e9;
-      for (const p of ring) { if (p[0] < a) a = p[0]; if (p[0] > c2) c2 = p[0]; if (p[1] < b2) b2 = p[1]; if (p[1] > d) d = p[1]; }
-      cityWater.push({ ring, bb: [a, b2, c2, d] });
+      for (const p of o) { if (p[0] < a) a = p[0]; if (p[0] > c2) c2 = p[0]; if (p[1] < b2) b2 = p[1]; if (p[1] > d) d = p[1]; }
+      cityWater.push({ rings: f.rings, ring: o, bb: [a, b2, c2, d] });   // координаты [u,v]: ring=маска, rings=с дырами
     }
-  } catch (e) { /* без маски воды */ }
+  } catch (e) { /* без воды */ }
   return true;
 }
 // строит/ПЕРЕСТРАИВАЕТ массинг по кэшу. Вырез вокруг hero — из FX_SET.cityCut (слайдер в техзоне).
@@ -1031,8 +1037,10 @@ function rebuildCityMassing() {
   if (!cityData || !GEOREG) return;
   if (cityMassing) { scene.remove(cityMassing); cityMassing.geometry.dispose(); cityMassing.material.dispose(); cityMassing = null; }
   const data = cityData;
-  const inWater = (lon, lat) => cityWater.some(w =>
-    lon >= w.bb[0] && lon <= w.bb[2] && lat >= w.bb[1] && lat <= w.bb[3] && pointInRing(lon, lat, w.ring));
+  const inWater = (lon, lat) => {     // вода в [u,v] карты → переводим центр здания lon/lat в uv
+    const uv = geoToUv(lon, lat); if (!uv) return false; const [u, v] = uv;
+    return cityWater.some(w => u >= w.bb[0] && u <= w.bb[2] && v >= w.bb[1] && v <= w.bb[3] && pointInRing(u, v, w.ring));
+  };
   const bb = data.bbox, dW = bb.east - bb.west, dS = bb.north - bb.south;
   const ss = (x) => { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); };
   const sEdge = (t) => Math.min(ss(t / CITY_EDGE), ss((1 - t) / CITY_EDGE));   // 0 у края bbox, 1 в центре
@@ -1072,41 +1080,54 @@ const waterMat = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false,
   uniforms: {
     time: { value: 0 }, sunDir: { value: new THREE.Vector3(0, 1, 0) }, camPos: { value: new THREE.Vector3() },
-    base: { value: new THREE.Color(0x0a1622) }, hi: { value: new THREE.Color(0x33506e) }, sunCol: { value: new THREE.Color(0xfff0d0) },
+    nightF: { value: 0 },
+    base: { value: new THREE.Color(0x0a1622) }, sky: { value: new THREE.Color(0x33506e) },
+    sunCol: { value: new THREE.Color(0xfff0d0) }, moonCol: { value: new THREE.Color(0x93b0e0) },
   },
   vertexShader: `varying vec3 vW; void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vW = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
-  fragmentShader: `varying vec3 vW; uniform float time; uniform vec3 sunDir, camPos, base, hi, sunCol;
+  fragmentShader: `varying vec3 vW; uniform float time, nightF; uniform vec3 sunDir, camPos, base, sky, sunCol, moonCol;
     void main(){ vec2 p = vW.xz;
       float nx = sin(p.x*0.25 + time*0.6) + sin((p.x+p.y)*0.17 + time*0.8)*0.7;
       float nz = sin(p.y*0.31 - time*0.5) + sin((p.x-p.y)*0.21 - time*0.7)*0.7;
-      vec3 nrm = normalize(vec3(nx*0.05, 1.0, nz*0.05));
+      vec3 nrm = normalize(vec3(nx*0.06, 1.0, nz*0.06));
       vec3 view = normalize(camPos - vW);
       float fres = pow(1.0 - max(dot(nrm, view), 0.0), 3.0);
-      vec3 col = mix(base, hi, fres);
+      // тёмная вода + отражение неба: Френель + минимум (плашмя всё равно блестит) → не чёрная дыра
+      vec3 col = mix(base, sky, clamp(fres + 0.16 + 0.10*nightF, 0.0, 1.0));
+      // дневной солнечный блик
       vec3 sd = normalize(sunDir);
       float spec = pow(max(dot(reflect(-sd, nrm), view), 0.0), 90.0) * max(sd.y, 0.0);
       col += sunCol * spec * 1.6;
-      gl_FragColor = vec4(col, 0.94); }`,
+      // ночь: лунная дорожка + бегущие блёстки (детерминир. по time) — отделяет воду от чёрного массинга
+      vec3 md = normalize(vec3(0.30, 0.85, 0.35));
+      float mspec = pow(max(dot(reflect(-md, nrm), view), 0.0), 36.0);
+      float glit = max(0.0, sin(p.x*1.4 + p.y*1.1 + time*1.6)) * max(0.0, sin(p.x*0.7 - p.y*1.3 - time*1.1));
+      col += moonCol * (mspec*1.1 + glit*0.10) * nightF;
+      gl_FragColor = vec4(col, 0.9); }`,
 });
 let waterMesh = null;
 function buildWater() {
-  if (waterMesh || !GEOREG || !cityWater || !cityWater.length) return;
+  if (waterMesh || !cityWater || !cityWater.length) return;
+  // вода задана в [u,v] карты (extract_water_map.py) → uvToWorld ложит ПИКСЕЛЬ-В-ПИКСЕЛЬ
+  // на нарисованное русло; ни TPS, ни клип не нужны (данные уже в пределах карты).
+  const toV = (c) => { const p = uvToWorld(c[0], c[1], 0); return new THREE.Vector2(p.x, -p.z); };
   const geoms = [];
   for (const w of cityWater) {
-    const ring = w.ring; if (ring.length < 5) continue;
-    const p0 = geoToWorld(w.bb[0], w.bb[1], 0), p1 = geoToWorld(w.bb[2], w.bb[3], 0);
-    if (!p0 || !p1 || Math.hypot(p1.x - p0.x, p1.z - p0.z) < 4) continue;     // пропустить мелкие пруды
-    const pts = [];
-    for (const c of ring) { const wp = geoToWorld(c[0], c[1], 0); if (wp) pts.push(new THREE.Vector2(wp.x, -wp.z)); }
-    if (pts.length < 4) continue;
-    const g = new THREE.ShapeGeometry(new THREE.Shape(pts)); g.rotateX(-Math.PI / 2); g.deleteAttribute("uv");
+    const outer = (w.rings && w.rings[0]) || w.ring; if (!outer || outer.length < 4) continue;
+    const pts = outer.map(toV); if (pts.length < 3) continue;
+    const shape = new THREE.Shape(pts);
+    for (let h = 1; w.rings && h < w.rings.length; h++) {        // острова-дыры (Заячий и т.д.)
+      const hp = w.rings[h].map(toV);
+      if (hp.length >= 3) shape.holes.push(new THREE.Path(hp));
+    }
+    const g = new THREE.ShapeGeometry(shape); g.rotateX(-Math.PI / 2); g.deleteAttribute("uv");
     geoms.push(g);
   }
   if (!geoms.length) return;
   const merged = mergeGeometries(geoms, false); geoms.forEach((g) => g.dispose());
   waterMesh = new THREE.Mesh(merged, waterMat); waterMesh.position.y = 0.06; waterMesh.renderOrder = 1;
   scene.add(waterMesh);
-  console.log(`%cМТК24 · вода Невы: ${geoms.length} полигонов`, "color:#6db4d8");
+  console.log(`%cМТК24 · вода Невы: ${geoms.length} полигонов (из антикварной карты, uv)`, "color:#6db4d8");
 }
 async function buildCityMassing() {
   if (cityMassing) return;

@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGETS = {
     "/api/save-locations": (os.path.join(ROOT, "data", "locations.js"), "MTK24_LOCATIONS"),
     "/api/save-streets":   (os.path.join(ROOT, "data", "streets.js"),   "MTK24_STREETS"),
+    "/api/save-water":     (os.path.join(ROOT, "data", "petrograd_water_map.json"), "\"water\""),  # обводка воды (tools/water_trace.html)
 }
 RENDER_DIR = os.path.join(ROOT, "render")          # сюда кладём PNG-кадры оффлайн-рендера
 SAFE = re.compile(r"^[A-Za-z0-9._-]+$")            # безопасные имена (без path traversal)

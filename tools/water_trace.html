@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>МТК-24 · обводка воды по карте</title>
+<style>
+  :root { --bg:#0e1116; --panel:#161b22; --ink:#e6e6e6; --acc:#6db4d8; --warn:#d8704a; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; overflow:hidden; }
+  #cv { position:fixed; inset:0; cursor:crosshair; }
+  #bar { position:fixed; top:10px; left:10px; right:10px; z-index:5; display:flex; gap:6px;
+    align-items:center; flex-wrap:wrap; background:rgba(22,27,34,.92); border:1px solid #2a313b;
+    border-radius:10px; padding:8px 10px; backdrop-filter:blur(6px); }
+  button, label.btn { background:#222a35; color:var(--ink); border:1px solid #38424f; border-radius:7px;
+    padding:6px 10px; cursor:pointer; font-size:12px; user-select:none; }
+  button:hover { background:#2b3744; }
+  button.on { background:var(--acc); color:#06121a; border-color:var(--acc); font-weight:700; }
+  button.warn { border-color:var(--warn); color:#f0b39e; }
+  button.save { background:#2e7d4f; border-color:#2e7d4f; color:#eafff1; font-weight:700; }
+  .sep { width:1px; height:22px; background:#2a313b; margin:0 4px; }
+  .chk { display:inline-flex; align-items:center; gap:5px; }
+  #hint { position:fixed; bottom:10px; left:10px; z-index:5; background:rgba(22,27,34,.92);
+    border:1px solid #2a313b; border-radius:9px; padding:8px 11px; max-width:560px; color:#aeb8c4; }
+  #hint b { color:var(--ink); }
+  #stat { margin-left:auto; color:#8b96a3; font-variant-numeric:tabular-nums; }
+  kbd { background:#0c0f14; border:1px solid #313a45; border-radius:4px; padding:0 5px; color:#cdd6df; }
+  #toast { position:fixed; top:64px; left:50%; transform:translateX(-50%); z-index:9;
+    background:#1d2530; border:1px solid #38424f; border-radius:8px; padding:9px 14px; opacity:0;
+    transition:opacity .2s; pointer-events:none; }
+  #toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="bar">
+  <b style="color:var(--acc)">вода ↔ карта</b>
+  <span class="sep"></span>
+  <button id="mWater" class="on">➕ Вода <kbd>W</kbd></button>
+  <button id="mHole">🕳 Остров <kbd>H</kbd></button>
+  <button id="mEdit">✎ Править <kbd>E</kbd></button>
+  <button id="del" class="warn">🗑 Удалить <kbd>⌫</kbd></button>
+  <span class="sep"></span>
+  <button id="undo">↶ Отмена <kbd>⌘Z</kbd></button>
+  <button id="fit">⤢ Вписать</button>
+  <label class="chk"><input type="checkbox" id="ref" checked> авто-вода (фон)</label>
+  <span class="sep"></span>
+  <button id="loadAuto">загрузить авто</button>
+  <button id="save" class="save">💾 Сохранить в сцену</button>
+  <button id="dl">⬇︎ JSON</button>
+  <span id="stat"></span>
+</div>
+<div id="hint">
+  <b>➕ Вода</b>: клики по контуру реки, <kbd>Enter</kbd>/двойной клик — замкнуть. <b>🕳 Остров</b>: обведи остров — станет дырой в реке.
+  <b>✎ Править</b>: тяни точки; <b>рамкой</b> выдели несколько (<kbd>Shift</kbd>+клик — +/− точку), <kbd>⌫</kbd> удалит все сразу — соседние сомкнутся; <kbd>Alt</kbd>+клик по ребру — вставить точку; клик по пустому внутри — выбрать полигон целиком.
+  Панорама — <kbd>Space</kbd>+тяни или правая кнопка; зум — колесо.
+</div>
+<div id="toast"></div>
+<script>
+const MAP_URL = "/assets/map/petrograd_2048.png";
+const DATA_URL = "/data/petrograd_water_map.json";
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const img = new Image();
+let IW = 1, IH = 1, ready = false;
+
+// модель: polys = [{rings:[ [[u,v]...](outer), [hole]... ]}]
+let polys = [];
+let mode = "water";             // water | hole | edit
+let cur = [];                   // строящееся кольцо (в uv)
+let selV = [];                  // МУЛЬТИ-выделение вершин: [{p,r,v}, ...]
+let selP = null;                // выбран полигон целиком (когда вершины не выбраны)
+let hover = null;               // {p,r,v} или {p,r,i} (ребро при Alt)
+let marquee = null;             // рамка выделения {x0,y0,x1,y1,add} в экранных px
+let dragV = null;               // перетаскивание выбранных вершин {start:[u,v], orig:[{p,r,v,x,y}]}
+let view = { s: 1, x: 0, y: 0 };
+let panning = false, space = false, pan0 = null;
+const hist = [];
+const idxInSel = (ref) => selV.findIndex((s) => s.p === ref.p && s.r === ref.r && s.v === ref.v);
+
+// ---- координаты ----
+const toScreen = (u, v) => [u * IW * view.s + view.x, v * IH * view.s + view.y];
+const toUV = (sx, sy) => [ (sx - view.x) / view.s / IW, (sy - view.y) / view.s / IH ];
+function fitView() {
+  const m = 70, w = innerWidth - m * 2, h = innerHeight - m * 2;
+  view.s = Math.min(w / IW, h / IH);
+  view.x = (innerWidth - IW * view.s) / 2; view.y = (innerHeight - IH * view.s) / 2;
+}
+function resize() { cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio;
+  cv.style.width = innerWidth + "px"; cv.style.height = innerHeight + "px";
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); }
+
+// ---- история (undo) ----
+function snap() { hist.push(JSON.stringify(polys)); if (hist.length > 80) hist.shift(); }
+function undoOp() { if (!hist.length) return; polys = JSON.parse(hist.pop()); selV = []; selP = null; cur = []; }
+
+// ---- утилиты ----
+function pointInRing(u, v, r) { let inside = false;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++)
+    if (((r[i][1] > v) !== (r[j][1] > v)) &&
+        (u < (r[j][0] - r[i][0]) * (v - r[i][1]) / (r[j][1] - r[i][1] + 1e-18) + r[i][0])) inside = !inside;
+  return inside; }
+function nearestVert(uv) {                       // ближайшая вершина (для edit), порог в экранных px
+  let best = null, bd = 11 / view.s / IW;        // ~11px
+  polys.forEach((P, p) => P.rings.forEach((R, r) => R.forEach((pt, v) => {
+    const d = Math.hypot(pt[0] - uv[0], pt[1] - uv[1]); if (d < bd) { bd = d; best = { p, r, v }; }
+  })));
+  return best; }
+function nearestEdge(uv) {                        // ближайшее ребро (для вставки), порог px
+  let best = null, bd = 8 / view.s / IW;
+  polys.forEach((P, p) => P.rings.forEach((R, r) => {
+    for (let i = 0; i < R.length; i++) {
+      const a = R[i], b = R[(i + 1) % R.length];
+      const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1e-12;
+      let t = ((uv[0] - a[0]) * dx + (uv[1] - a[1]) * dy) / L2; t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(uv[0] - (a[0] + t * dx), uv[1] - (a[1] + t * dy));
+      if (d < bd) { bd = d; best = { p, r, i: i + 1 }; }
+    }
+  }));
+  return best; }
+
+// ---- ввод ----
+addEventListener("keydown", (e) => {
+  if (e.code === "Space") { space = true; cv.style.cursor = "grab"; }
+  if (e.metaKey && e.key.toLowerCase() === "z") { e.preventDefault(); undoOp(); return; }
+  if (e.target.tagName === "INPUT") return;
+  if (e.key === "Enter") closeRing();
+  else if (e.key === "Escape") { cur = []; selV = []; selP = null; marquee = null; }
+  else if (e.key === "Backspace" || e.key === "Delete") { e.preventDefault(); doDelete(); }
+  else if (e.key.toLowerCase() === "w") setMode("water");
+  else if (e.key.toLowerCase() === "h") setMode("hole");
+  else if (e.key.toLowerCase() === "e") setMode("edit");
+});
+addEventListener("keyup", (e) => { if (e.code === "Space") { space = false; cv.style.cursor = "crosshair"; } });
+
+cv.addEventListener("mousedown", (e) => {
+  const sx = e.offsetX, sy = e.offsetY, uv = toUV(sx, sy);
+  if (e.button === 2 || space) { panning = true; pan0 = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y }; return; }
+  if (mode === "edit") {
+    if (e.altKey) { const ed = nearestEdge(uv); if (ed) { snap(); polys[ed.p].rings[ed.r].splice(ed.i, 0, uv); selV = [{ p: ed.p, r: ed.r, v: ed.i }]; selP = null; return; } }
+    const nv = nearestVert(uv);
+    if (nv) {
+      if (e.shiftKey) { const k = idxInSel(nv); if (k >= 0) selV.splice(k, 1); else selV.push(nv); selP = null; return; }  // +/− в набор
+      if (idxInSel(nv) < 0) { selV = [nv]; selP = null; }                 // клик по невыбранной — выделить только её
+      snap();                                                            // и тащить выбранный набор
+      dragV = { start: uv, orig: selV.map((s) => ({ p: s.p, r: s.r, v: s.v, x: polys[s.p].rings[s.r][s.v][0], y: polys[s.p].rings[s.r][s.v][1] })) };
+      return;
+    }
+    marquee = { x0: sx, y0: sy, x1: sx, y1: sy, add: e.shiftKey };       // не по вершине — рамка выделения
+  } else { // water | hole — добавляем точку
+    cur.push(uv);
+  }
+});
+cv.addEventListener("mousemove", (e) => {
+  const uv = toUV(e.offsetX, e.offsetY);
+  if (panning) { view.x = pan0.vx + (e.clientX - pan0.x); view.y = pan0.vy + (e.clientY - pan0.y); return; }
+  if (mode === "edit") {
+    if (dragV) { const du = uv[0] - dragV.start[0], dv = uv[1] - dragV.start[1];
+      for (const o of dragV.orig) polys[o.p].rings[o.r][o.v] = [o.x + du, o.y + dv]; }
+    else if (marquee) { marquee.x1 = e.offsetX; marquee.y1 = e.offsetY; }
+    else { hover = e.altKey ? nearestEdge(uv) : nearestVert(uv); }
+  }
+  mouseUV = uv;
+});
+addEventListener("mouseup", () => {
+  panning = false;
+  if (dragV) { dragV = null; return; }
+  if (marquee) {
+    const moved = Math.abs(marquee.x1 - marquee.x0) + Math.abs(marquee.y1 - marquee.y0) > 4;
+    if (moved) {                                                          // рамка → выбрать все вершины внутри
+      const xmin = Math.min(marquee.x0, marquee.x1), xmax = Math.max(marquee.x0, marquee.x1);
+      const ymin = Math.min(marquee.y0, marquee.y1), ymax = Math.max(marquee.y0, marquee.y1), hit = [];
+      polys.forEach((P, p) => P.rings.forEach((R, r) => R.forEach((pt, v) => {
+        const [x, y] = toScreen(pt[0], pt[1]); if (x >= xmin && x <= xmax && y >= ymin && y <= ymax) hit.push({ p, r, v });
+      })));
+      if (marquee.add) { for (const h of hit) if (idxInSel(h) < 0) selV.push(h); } else selV = hit;
+      selP = null;
+    } else {                                                              // клик по пустому → выбрать полигон / снять
+      const uv = toUV(marquee.x0, marquee.y0); let hitP = null;
+      for (let p = polys.length - 1; p >= 0; p--) if (pointInRing(uv[0], uv[1], polys[p].rings[0])) { hitP = p; break; }
+      selV = []; selP = hitP;
+    }
+    marquee = null;
+  }
+});
+cv.addEventListener("dblclick", () => closeRing());
+cv.addEventListener("contextmenu", (e) => e.preventDefault());
+cv.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const sx = e.offsetX, sy = e.offsetY, k = Math.exp(-e.deltaY * 0.0014);
+  const [u, v] = toUV(sx, sy);
+  view.s *= k; view.x = sx - u * IW * view.s; view.y = sy - v * IH * view.s;
+}, { passive: false });
+let mouseUV = [0, 0];
+
+function closeRing() {
+  if (cur.length < 3) { cur = []; return; }
+  snap();
+  if (mode === "hole") {
+    // найти полигон, внутри которого центр кольца → добавить как дыру
+    const c = cur.reduce((a, b) => [a[0] + b[0], a[1] + b[1]], [0, 0]).map(x => x / cur.length);
+    let host = -1;
+    for (let p = polys.length - 1; p >= 0; p--) if (pointInRing(c[0], c[1], polys[p].rings[0])) { host = p; break; }
+    if (host >= 0) polys[host].rings.push(cur.slice());
+    else toast("остров вне воды — провести по реке");
+  } else {
+    polys.push({ rings: [cur.slice()] });
+  }
+  cur = [];
+}
+function doDelete() {
+  if (mode === "edit" && selV.length) {                    // удалить ВСЕ выбранные вершины разом
+    snap();
+    const byRing = {};                                     // сгруппировать по кольцу (p,r)
+    for (const s of selV) (byRing[s.p + ":" + s.r] = byRing[s.p + ":" + s.r] || []).push(s.v);
+    for (const key in byRing) { const [p, r] = key.split(":").map(Number);
+      byRing[key].sort((a, b) => b - a).forEach((v) => polys[p].rings[r].splice(v, 1)); }   // по убыванию индексов
+    // соседние оставшиеся точки кольца смыкаются автоматически (кольцо — упорядоченный замкнутый список).
+    for (let p = polys.length - 1; p >= 0; p--) {          // подчистить выродившиеся кольца
+      if (polys[p].rings[0].length < 3) { polys.splice(p, 1); continue; }                    // внешнее <3 → весь полигон
+      for (let r = polys[p].rings.length - 1; r >= 1; r--) if (polys[p].rings[r].length < 3) polys[p].rings.splice(r, 1);  // дыра <3
+    }
+    selV = []; return;
+  }
+  if (selP != null) { snap(); polys.splice(selP, 1); selP = null; }     // удалить выбранный полигон целиком
+}
+
+// ---- режимы / кнопки ----
+function setMode(m) { mode = m; cur = []; selV = []; selP = null; marquee = null; dragV = null;
+  for (const [k, id] of [["water","mWater"],["hole","mHole"],["edit","mEdit"]])
+    document.getElementById(id).classList.toggle("on", k === m);
+  cv.style.cursor = m === "edit" ? "default" : "crosshair"; }
+document.getElementById("mWater").onclick = () => setMode("water");
+document.getElementById("mHole").onclick = () => setMode("hole");
+document.getElementById("mEdit").onclick = () => setMode("edit");
+document.getElementById("del").onclick = doDelete;
+document.getElementById("undo").onclick = undoOp;
+document.getElementById("fit").onclick = fitView;
+document.getElementById("loadAuto").onclick = () => { if (ref0) { snap(); polys = JSON.parse(JSON.stringify(ref0.water)); toast("авто-вода загружена в редактор"); } };
+
+function buildOut() {
+  const R5 = (x) => Math.round(x * 1e5) / 1e5;
+  const water = polys.filter(P => P.rings[0] && P.rings[0].length >= 3)
+    .map(P => ({ rings: P.rings.filter(r => r.length >= 3).map(r => r.map(p => [R5(p[0]), R5(p[1])])) }));
+  return { source: "manual trace (water_trace.html)", space: "uv", count: water.length, water };
+}
+save.onclick = async () => {
+  const out = buildOut();
+  try {
+    const r = await fetch("/api/save-water", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(out) });
+    toast(r.ok ? "✓ сохранено в data/petrograd_water_map.json — перезагрузи сцену" : "сервер отклонил (нужен /api/save-water)");
+  } catch (e) { toast("нет сервера — жми ⬇︎ JSON"); }
+};
+dl.onclick = () => { const b = new Blob([JSON.stringify(buildOut())], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "petrograd_water_map.json"; a.click(); };
+let toastT; function toast(m) { const t = document.getElementById("toast"); t.textContent = m; t.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2600); }
+
+// ---- отрисовка ----
+function ring(R, close) { ctx.beginPath(); R.forEach((p, i) => { const [x, y] = toScreen(p[0], p[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); if (close) ctx.closePath(); }
+function draw() {
+  ctx.clearRect(0, 0, innerWidth, innerHeight);
+  if (ready) ctx.drawImage(img, view.x, view.y, IW * view.s, IH * view.s);
+  // фон: авто-вода (дыры-острова вырезаются evenodd — суша остаётся сушей)
+  if (ref0 && document.getElementById("ref").checked) {
+    ctx.fillStyle = "rgba(60,150,230,.22)"; ctx.strokeStyle = "rgba(80,180,255,.5)"; ctx.lineWidth = 1;
+    for (const P of ref0.water) {
+      ctx.beginPath();
+      P.rings.forEach((R) => { R.forEach((pt, i) => { const [x, y] = toScreen(pt[0], pt[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); });
+      ctx.fill("evenodd");
+      P.rings.forEach((R) => { ring(R, true); ctx.stroke(); });
+    }
+  }
+  // полигоны воды (редактируемые)
+  const selSet = new Set(selV.map((s) => s.p + ":" + s.r + ":" + s.v));
+  polys.forEach((P, p) => {
+    const isSel = selP === p;
+    ctx.beginPath();
+    P.rings.forEach((R) => { R.forEach((pt, i) => { const [x, y] = toScreen(pt[0], pt[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); });
+    ctx.fillStyle = isSel ? "rgba(109,180,216,.42)" : "rgba(40,130,210,.34)";
+    ctx.fill("evenodd");
+    ctx.lineWidth = isSel ? 2 : 1.3; ctx.strokeStyle = "#7fd0f2"; ring(P.rings[0], true); ctx.stroke();
+    ctx.strokeStyle = "#e07a52"; for (let h = 1; h < P.rings.length; h++) { ring(P.rings[h], true); ctx.stroke(); }
+    if (mode === "edit") P.rings.forEach((R, r) => R.forEach((pt, v) => {
+      const [x, y] = toScreen(pt[0], pt[1]); const h = hover && hover.p === p && hover.r === r && hover.v === v;
+      const s = selSet.has(p + ":" + r + ":" + v);
+      ctx.fillStyle = s ? "#ffd24a" : h ? "#fff" : (r ? "#e07a52" : "#7fd0f2");
+      ctx.beginPath(); ctx.arc(x, y, s || h ? 5 : 3, 0, 7); ctx.fill();
+    }));
+  });
+  // строящееся кольцо
+  if (cur.length) {
+    ctx.strokeStyle = mode === "hole" ? "#e07a52" : "#ffd24a"; ctx.lineWidth = 2; ring(cur, false);
+    const [mx, my] = toScreen(mouseUV[0], mouseUV[1]); ctx.lineTo(mx, my); ctx.stroke();
+    cur.forEach(pt => { const [x, y] = toScreen(pt[0], pt[1]); ctx.fillStyle = "#ffd24a"; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.fill(); });
+  }
+  // hover-ребро (Alt-вставка)
+  if (mode === "edit" && hover && hover.i != null) {
+    const [x, y] = toScreen(mouseUV[0], mouseUV[1]); ctx.fillStyle = "#9effa0";
+    ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
+  }
+  // рамка выделения
+  if (marquee) {
+    ctx.save(); ctx.strokeStyle = "#ffd24a"; ctx.fillStyle = "rgba(255,210,74,.10)"; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+    const x = Math.min(marquee.x0, marquee.x1), y = Math.min(marquee.y0, marquee.y1);
+    const w = Math.abs(marquee.x1 - marquee.x0), h = Math.abs(marquee.y1 - marquee.y0);
+    ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h); ctx.restore();
+  }
+  const np = polys.length, pts = polys.reduce((a, P) => a + P.rings.reduce((b, r) => b + r.length, 0), 0);
+  const selTxt = selV.length ? ` · выбрано ${selV.length}` : (selP != null ? " · полигон выбран" : "");
+  document.getElementById("stat").textContent = `режим: ${mode} · полигонов ${np} · точек ${pts}${selTxt} · зум ${(view.s).toFixed(2)}×`;
+  requestAnimationFrame(draw);
+}
+
+// ---- загрузка ----
+let ref0 = null;
+fetch(DATA_URL).then(r => r.ok ? r.json() : null).then(j => { if (j && j.water) ref0 = j; }).catch(() => {});
+img.onload = () => { IW = img.naturalWidth; IH = img.naturalHeight; ready = true; resize(); fitView(); };
+img.src = MAP_URL;
+addEventListener("resize", () => { resize(); });
+resize(); draw();
+</script>
+</body>
+</html>
