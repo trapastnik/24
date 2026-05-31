@@ -59,22 +59,22 @@
         <dl class="tech-meta" id="tech-meta"></dl>
       </div>
 
-      <!-- ОКНО СТАТУСА ЗАГРУЗКИ МОДЕЛЕЙ (✓ загружено / % / ✗ ошибка) -->
-      <div class="tech-load" id="tech-load">
-        <span class="tech-label" id="ls-label">статус моделей</span>
+      <!-- ОКНО СТАТУСА ЗАГРУЗКИ МОДЕЛЕЙ (✓ загружено / % / ✗ ошибка) — сворачиваемое -->
+      <details class="tech-load fold" id="tech-load" open>
+        <summary class="tech-label" id="ls-label">статус моделей</summary>
         <div class="ls-list" id="ls-list"></div>
-      </div>
+      </details>
 
       <!-- 3D-ВЬЮЕР ОБЪЕКТА: по клику на здание на карте оно крутится здесь под светом.
            Сам вьюер — _qa.html (зона сессии моделей), принимает ?key=<ключ из data/models.js>. -->
-      <section class="tech-viewer" id="tech-viewer">
-        <span class="tech-label">3D-модель · клик по зданию на карте</span>
+      <details class="tech-viewer fold" id="tech-viewer" open>
+        <summary class="tech-label">3D-модель · клик по зданию на карте</summary>
         <div class="tv-stage">
           <iframe id="model-view" title="3D-модель объекта"
             src="./assets/models/_qa.html?key=fortress&bg=0x12181e"></iframe>
           <div class="tv-cap" id="tv-cap">Петропавловская крепость</div>
         </div>
-      </section>
+      </details>
 
       <div class="tech-vo" id="tech-vo">
         <span class="tech-label">ГЗК · полный дикторский текст</span>
