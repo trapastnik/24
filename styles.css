@@ -145,6 +145,12 @@ html, body {
   accent-color: var(--brass); cursor: pointer; background: rgba(157,163,166,0.3);
 }
 .ctrl-val { color: var(--brass); font-weight: 600; justify-self: end; min-width: 3.2em; text-align: right; }
+.bt-readout {
+  font-family: "20 Kopeek", monospace; font-size: clamp(9px,1.05vh,12px); line-height: 1.4;
+  color: var(--window); opacity: 0.9; min-height: 1.2em;
+}
+.bt-readout b { color: var(--brass); }
+.bt-copy { color: var(--brass); cursor: pointer; text-decoration: underline dotted; }
 
 /* большие часы + календарь (время события) */
 .clockbox {
