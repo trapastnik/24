@@ -13,8 +13,8 @@
 window.MTK24_MODELS = {
   dir: "./assets/models/",
   cfg: {
-    // Смольный институт — длинный корпус; size = длина по фасаду (не компактный собор).
-    smolny:    { file: "smolny.glb",    size: 9,    yaw: 0 },
+    // ТЕСТ: вместо Смольного — кирпичный магазин (Poly/FBX, конверт. assimp). Вернуть: file → "smolny.glb".
+    smolny:    { file: "brick_shop.glb", size: 9,   yaw: 0 },
     winter:    { file: "winter.glb",    size: 6,    yaw: 0 },
     fortress:  { file: "fortress.glb",  size: 6.5,  yaw: 0 },
     mariinsky: { file: "mariinsky.glb", size: 4,    yaw: 0 },

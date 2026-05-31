@@ -6,7 +6,7 @@
  *
  * Зависимостей нет: glTF (.glb) пишется руками. Запуск:  node tools/build_models.mjs
  */
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
@@ -30,7 +30,16 @@ const MAT = {
   facadePale:  { tint: 0xF0E9D6, metallic: 0.0, roughness: 1.0, tex: true },  // бело-палевый (Зимний, Смольный)
   facadeStone: { tint: 0xDCCFAD, metallic: 0.0, roughness: 1.0, tex: true },  // тёплый камень (дворцы)
   facadeRed:   { tint: 0xC08A78, metallic: 0.0, roughness: 1.0, tex: true },  // охра/терракота
+  // РЕАЛЬНЫЕ PBR-карты (Poly Haven CC0, assets/models/ref/apartments/textures) — diff/normal/arm:
+  realPlaster: { real: true, base: "plaster_diff_1k.jpg",  nor: "plaster_nor_gl_1k.jpg",  arm: "plaster_arm_1k.jpg" },   // стены
+  realTrim:    { real: true, base: "trim_01_diff_1k.jpg",  nor: "trim_01_nor_gl_1k.jpg",  arm: "trim_01_arm_1k.jpg" },   // камень/трим (цоколь, карниз, пилястры)
+  // стекло окон (тёмное, глянцевое, светится ночью) и тёмная рама:
+  glass:       { hex: 0x0A0E16, metallic: 0.1, roughness: 0.18, emit: 0xFFB060, emitStr: 2.2 },
+  frame:       { hex: 0x2A2622, metallic: 0.0, roughness: 0.6 },
 };
+const PHX = "modular_urban_apartments_facade_";                       // префикс файлов Poly Haven
+const TEXDIR = join(OUT, "ref", "apartments", "textures");
+const realFile = (name) => join(TEXDIR, PHX + name);
 const srgbToLinear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 function linearRGBA(hex) {
   return [srgbToLinear(((hex >> 16) & 255) / 255), srgbToLinear(((hex >> 8) & 255) / 255), srgbToLinear((hex & 255) / 255), 1];
@@ -199,7 +208,7 @@ class Model {
 // единицы условные; во вьюере модель нормируется по высоте. база ≈ y=0.
 
 // классицистический рельеф: выступающий цоколь + ритмический ряд пилястр по фасадам (+Z/−Z)
-function relief(m, { w, d, h, y0 = 0, pil = "paper", base = "graphite", plinth = true, step = 2.4 }) {
+function relief(m, { w, d, h, y0 = 0, pil = "realTrim", base = "realTrim", plinth = true, step = 2.4 }) {
   const fz = d / 2 + 0.1;
   if (plinth) m.add(box(w + 0.5, 0.7, d + 0.5), { mat: base, pos: [0, y0 + 0.35, 0] });
   const n = Math.max(2, Math.round(w / step));
@@ -207,6 +216,28 @@ function relief(m, { w, d, h, y0 = 0, pil = "paper", base = "graphite", plinth =
     const x = -w / 2 + (w * i) / n;
     for (const z of [fz, -fz]) m.add(box(0.45, h - 0.5, 0.3), { mat: pil, pos: [x, y0 + (h - 0.5) / 2 + 0.35, z] });
   }
+}
+
+// сетка окон (рама + светящееся стекло) по всем 4 фасадам блока с центром (cx,cz)
+function windows(m, { w, d, h, y0 = 0, cx = 0, cz = 0, floorH = 2.3, colStep = 2.6, inset = 0.06 }) {
+  const rows = Math.max(1, Math.floor(h / floorH));
+  const grid = (faceLen, axis, sign, half) => {
+    const cols = Math.max(1, Math.floor(faceLen / colStep));
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const u = -faceLen / 2 + faceLen * (c + 0.5) / cols, y = y0 + h * (r + 0.45) / rows;
+      if (axis === "z") {
+        const z = cz + sign * (half + inset);
+        m.add(box(1.2, 1.7, 0.2), { mat: "frame", pos: [cx + u, y, z] });
+        m.add(box(0.95, 1.45, 0.06), { mat: "glass", pos: [cx + u, y, z + sign * 0.12] });
+      } else {
+        const x = cx + sign * (half + inset);
+        m.add(box(0.2, 1.7, 1.2), { mat: "frame", pos: [x, y, cz + u] });
+        m.add(box(0.06, 1.45, 0.95), { mat: "glass", pos: [x + sign * 0.12, y, cz + u] });
+      }
+    }
+  };
+  grid(w, "z", 1, d / 2); grid(w, "z", -1, d / 2);
+  grid(d, "x", 1, w / 2); grid(d, "x", -1, w / 2);
 }
 
 function smolny() {
@@ -239,29 +270,32 @@ function smolny() {
 function winter() {
   // Зимний дворец: длинный низкий барочный блок, чуть выше центр, парапет + статуи
   const m = new Model("winter");
-  m.add(box(20, 5, 6), { mat: "facadePale", pos: [0, 2.5, 0] });        // главный корпус (окна)
-  relief(m, { w: 20, d: 6, h: 5 });                                     // цоколь + пилястры
-  m.add(box(7, 6.2, 6.4), { mat: "facadePale", pos: [0, 3.1, 0] });     // центральный ризалит
-  m.add(box(20.6, 0.7, 6.6), { mat: "brass", pos: [0, 5.2, 0] });       // карниз
+  m.add(box(20, 5, 6), { mat: "realPlaster", pos: [0, 2.5, 0] });       // главный корпус
+  relief(m, { w: 20, d: 6, h: 5 });                                     // цоколь + пилястры (камень)
+  windows(m, { w: 20, d: 6, h: 5 });                                    // окна
+  m.add(box(7, 6.2, 6.4), { mat: "realPlaster", pos: [0, 3.1, 0] });    // центральный ризалит
+  windows(m, { w: 7, d: 6.4, h: 6.2 });
+  m.add(box(20.6, 0.7, 6.6), { mat: "brass", pos: [0, 5.2, 0] });       // карниз (золочёный)
   m.add(box(7.4, 0.7, 6.8), { mat: "brass", pos: [0, 6.6, 0] });        // карниз центра
   m.add(box(20.6, 0.5, 6.6), { mat: "graphite", pos: [0, 5.7, 0] });    // кровля-парапет
   // ряд кровельных статуй (намёк)
-  for (let i = -9; i <= 9; i += 1.8) m.add(box(0.3, 0.9, 0.3), { mat: "stone", pos: [i, 6.4, 2.9] });
+  for (let i = -9; i <= 9; i += 1.8) m.add(box(0.3, 0.9, 0.3), { mat: "realTrim", pos: [i, 6.4, 2.9] });
   // фланговые акценты
-  m.add(box(2, 5.6, 6.2), { mat: "facadePale", pos: [-9.2, 2.8, 0] });
-  m.add(box(2, 5.6, 6.2), { mat: "facadePale", pos: [9.2, 2.8, 0] });
+  m.add(box(2, 5.6, 6.2), { mat: "realPlaster", pos: [-9.2, 2.8, 0] });
+  m.add(box(2, 5.6, 6.2), { mat: "realPlaster", pos: [9.2, 2.8, 0] });
   return m;
 }
 
 function fortress() {
   // Петропавловский собор — узнаваемый золотой шпиль (визитка крепости)
   const m = new Model("fortress");
-  m.add(box(5, 3, 8), { mat: "facadeStone", pos: [0, 1.5, 2] });        // тело собора (окна)
-  m.add(box(5.4, 0.6, 8.4), { mat: "graphite", pos: [0, 3.1, 2] });     // кровля
+  m.add(box(5, 3, 8), { mat: "realPlaster", pos: [0, 1.5, 2] });        // тело собора
+  windows(m, { w: 5, d: 8, h: 3, cz: 2 });                              // окна по бокам
+  m.add(box(5.4, 0.6, 8.4), { mat: "realTrim", pos: [0, 3.1, 2] });     // карниз
   // ступенчатая колокольня
-  m.add(box(3.4, 4, 3.4), { mat: "facadeStone", pos: [0, 2, -2.2] });
-  m.add(box(2.8, 3, 2.8), { mat: "facadeStone", pos: [0, 5.5, -2.2] });
-  m.add(box(2.2, 2.5, 2.2), { mat: "stone", pos: [0, 8.2, -2.2] });
+  m.add(box(3.4, 4, 3.4), { mat: "realPlaster", pos: [0, 2, -2.2] });
+  m.add(box(2.8, 3, 2.8), { mat: "realPlaster", pos: [0, 5.5, -2.2] });
+  m.add(box(2.2, 2.5, 2.2), { mat: "realTrim", pos: [0, 8.2, -2.2] });
   m.add(cyl(1.2, 1.6, 2, 8), { mat: "brass", pos: [0, 9.4, -2.2] });    // золотой барабан
   // шпиль: очень высокий тонкий конус + игла + крест-намёк
   m.add(cyl(0.18, 1.1, 12, 8), { mat: "brass", pos: [0, 11.4, -2.2] }); // шпиль
@@ -273,33 +307,36 @@ function fortress() {
 function mariinsky() {
   // Мариинский дворец: классицистический блок + центральный портик с колоннами + аттик
   const m = new Model("mariinsky");
-  m.add(box(14, 5.5, 6), { mat: "facadeStone", pos: [0, 2.75, 0] });    // корпус (окна)
-  relief(m, { w: 14, d: 6, h: 5.5 });                                   // цоколь + пилястры
-  m.add(box(14.4, 0.6, 6.4), { mat: "paper", pos: [0, 5.6, 0] });       // карниз
+  m.add(box(14, 5.5, 6), { mat: "realPlaster", pos: [0, 2.75, 0] });    // корпус
+  relief(m, { w: 14, d: 6, h: 5.5 });                                   // цоколь + пилястры (камень)
+  windows(m, { w: 14, d: 6, h: 5.5 });                                  // окна
+  m.add(box(14.4, 0.6, 6.4), { mat: "realTrim", pos: [0, 5.6, 0] });    // карниз
   m.add(box(14, 0.5, 6.2), { mat: "graphite", pos: [0, 6.1, 0] });      // кровля
-  m.add(box(6.5, 4.6, 1.2), { mat: "facadeStone", pos: [0, 2.3, 3.2] }); // ризалит-портик
+  m.add(box(6.5, 4.6, 1.2), { mat: "realPlaster", pos: [0, 2.3, 3.2] }); // ризалит-портик
   // колонны портика
   for (let i = -2.4; i <= 2.4; i += 1.2) m.add(cyl(0.32, 0.32, 4, 8), { mat: "paper", pos: [i, 0, 3.9] });
   m.add(box(6.8, 1, 1.6), { mat: "paper", pos: [0, 4.6, 3.4] });        // антаблемент
-  m.add(box(5.5, 1.6, 1.2), { mat: "stone", pos: [0, 6.4, 0] });        // аттик
+  m.add(box(5.5, 1.6, 1.2), { mat: "realTrim", pos: [0, 6.4, 0] });     // аттик
   return m;
 }
 
 function tauride() {
   // Таврический дворец: центральный купол + 6-колонный портик + низкие крылья
   const m = new Model("tauride");
-  m.add(box(8, 5, 6), { mat: "facadeStone", pos: [0, 2.5, 0] });        // центр (окна)
-  relief(m, { w: 8, d: 6, h: 5 });                                      // цоколь + пилястры
-  m.add(box(6, 4, 5), { mat: "facadeStone", pos: [-9, 2, 0] });         // левое крыло
-  m.add(box(6, 4, 5), { mat: "facadeStone", pos: [9, 2, 0] });          // правое крыло
-  m.add(box(4, 4, 4.5), { mat: "facadeStone", pos: [-5.5, 2, 0] });     // галерея
-  m.add(box(4, 4, 4.5), { mat: "facadeStone", pos: [5.5, 2, 0] });
-  m.add(box(8.4, 0.6, 6.4), { mat: "paper", pos: [0, 5.3, 0] });        // карниз
+  m.add(box(8, 5, 6), { mat: "realPlaster", pos: [0, 2.5, 0] });        // центр
+  relief(m, { w: 8, d: 6, h: 5 });                                      // цоколь + пилястры (камень)
+  windows(m, { w: 8, d: 6, h: 5 });
+  m.add(box(6, 4, 5), { mat: "realPlaster", pos: [-9, 2, 0] });         // левое крыло
+  m.add(box(6, 4, 5), { mat: "realPlaster", pos: [9, 2, 0] });          // правое крыло
+  windows(m, { w: 6, d: 5, h: 4, cx: -9 }); windows(m, { w: 6, d: 5, h: 4, cx: 9 });
+  m.add(box(4, 4, 4.5), { mat: "realPlaster", pos: [-5.5, 2, 0] });     // галерея
+  m.add(box(4, 4, 4.5), { mat: "realPlaster", pos: [5.5, 2, 0] });
+  m.add(box(8.4, 0.6, 6.4), { mat: "realTrim", pos: [0, 5.3, 0] });     // карниз
   // портик
   for (let i = -2.5; i <= 2.5; i += 1) m.add(cyl(0.3, 0.3, 4.2, 8), { mat: "paper", pos: [i, 0, 3.3] });
   m.add(box(6.5, 1, 1.4), { mat: "paper", pos: [0, 4.2, 3.1] });
   // купол на барабане
-  m.add(cyl(2, 2.2, 1.6, 14), { mat: "stone", pos: [0, 5.6, 0] });
+  m.add(cyl(2, 2.2, 1.6, 14), { mat: "realTrim", pos: [0, 5.6, 0] });
   m.add(dome(2.2, 2.6, 16, 6), { mat: "graphite", pos: [0, 7.2, 0] });
   m.add(cyl(0, 0.1, 0.8, 6), { mat: "brass", pos: [0, 9.8, 0] });
   return m;
@@ -345,20 +382,25 @@ function writeGLB(model) {
     if (target !== undefined) view.target = target;
     chunks.push(buf); byteLen += buf.length; bufferViews.push(view); return bufferViews.length - 1;
   };
-  // фасадные PBR-текстуры встраиваем, только если модель их использует
-  const usesTex = [...model.parts.values()].some((p) => MAT[p.mat] && MAT[p.mat].tex);
-  let TEX = null;
-  if (usesTex) {
-    const f = facadeTex();
-    samplers.push({ wrapS: 10497, wrapT: 10497, magFilter: 9729, minFilter: 9987 }); // REPEAT + трилинейная
-    const img = (png) => { const bv = pushView(png, undefined); images.push({ bufferView: bv, mimeType: "image/png" }); textures.push({ source: images.length - 1, sampler: 0 }); return textures.length - 1; };
-    TEX = { base: img(f.base), norm: img(f.norm), mr: img(f.mr), emit: img(f.emit) };
-  }
+  // --- реестр текстур: процедурный фасад (PNG) + реальные карты Poly Haven (JPG), каждая встраивается один раз ---
+  let usesEmitStrength = false;
+  const texCache = new Map();
+  const embed = (key, buf, mime) => {
+    if (texCache.has(key)) return texCache.get(key);
+    if (!samplers.length) samplers.push({ wrapS: 10497, wrapT: 10497, magFilter: 9729, minFilter: 9987 }); // REPEAT + трилинейная
+    const bv = pushView(buf, undefined);
+    images.push({ bufferView: bv, mimeType: mime });
+    textures.push({ source: images.length - 1, sampler: 0 });
+    const idx = textures.length - 1; texCache.set(key, idx); return idx;
+  };
+  const facadeIdx = () => { const f = facadeTex(); return { base: embed("f_base", f.base, "image/png"), norm: embed("f_norm", f.norm, "image/png"), mr: embed("f_mr", f.mr, "image/png"), emit: embed("f_emit", f.emit, "image/png") }; };
+  const realIdx = (d) => ({ base: embed(d.base, readFileSync(realFile(d.base)), "image/jpeg"), norm: embed(d.nor, readFileSync(realFile(d.nor)), "image/jpeg"), arm: embed(d.arm, readFileSync(realFile(d.arm)), "image/jpeg") });
+
   for (const part of model.parts.values()) {
     const nVerts = part.pos.length / 3;
     const positions = Float32Array.from(part.pos), normals = Float32Array.from(part.nrm);
     const indices = Uint16Array.from(part.idx);
-    const def = MAT[part.mat], isTex = !!(def && def.tex);
+    const def = MAT[part.mat], needUV = !!(def && (def.tex || def.real));
     // min/max для POSITION (требование glTF)
     const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < positions.length; i += 3) for (let k = 0; k < 3; k++) {
@@ -370,7 +412,7 @@ function writeGLB(model) {
     const nrmView = pushView(normals, 34962);
     accessors.push({ bufferView: nrmView, componentType: 5126, count: nVerts, type: "VEC3" });
     attrs.NORMAL = accessors.length - 1;
-    if (isTex) {                                            // UV только для текстурных материалов
+    if (needUV) {                                           // UV для текстурных материалов (фасад/реальные)
       const uvView = pushView(Float32Array.from(part.uv), 34962);
       accessors.push({ bufferView: uvView, componentType: 5126, count: nVerts, type: "VEC2" });
       attrs.TEXCOORD_0 = accessors.length - 1;
@@ -381,17 +423,20 @@ function writeGLB(model) {
     // материал (по имени — переиспользуем)
     if (!matIndex.has(part.mat)) {
       let mat;
-      if (isTex) {
-        mat = {
-          name: part.mat, doubleSided: true,
-          pbrMetallicRoughness: { baseColorFactor: linearRGBA(def.tint), metallicFactor: 1, roughnessFactor: 1,
-            baseColorTexture: { index: TEX.base }, metallicRoughnessTexture: { index: TEX.mr } },
-          normalTexture: { index: TEX.norm, scale: 1.2 },
-          emissiveTexture: { index: TEX.emit }, emissiveFactor: [1, 1, 1],
-          extensions: { KHR_materials_emissive_strength: { emissiveStrength: 2.4 } }, // окна светятся ночью
-        };
-      } else {
+      if (def && def.tex) {                                 // процедурный фасад с окнами
+        const T = facadeIdx(); usesEmitStrength = true;
+        mat = { name: part.mat, doubleSided: true,
+          pbrMetallicRoughness: { baseColorFactor: linearRGBA(def.tint), metallicFactor: 1, roughnessFactor: 1, baseColorTexture: { index: T.base }, metallicRoughnessTexture: { index: T.mr } },
+          normalTexture: { index: T.norm, scale: 1.2 }, emissiveTexture: { index: T.emit }, emissiveFactor: [1, 1, 1],
+          extensions: { KHR_materials_emissive_strength: { emissiveStrength: 2.4 } } };
+      } else if (def && def.real) {                         // реальные PBR-карты (diff/normal/arm)
+        const T = realIdx(def);
+        mat = { name: part.mat, doubleSided: true,
+          pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1], metallicFactor: 1, roughnessFactor: 1, baseColorTexture: { index: T.base }, metallicRoughnessTexture: { index: T.arm } },
+          normalTexture: { index: T.norm }, occlusionTexture: { index: T.arm } };
+      } else {                                              // плоский (опц. emissive — стекло)
         mat = { name: part.mat, doubleSided: true, pbrMetallicRoughness: { baseColorFactor: linearRGBA(def.hex), metallicFactor: def.metallic, roughnessFactor: def.roughness } };
+        if (def.emit != null) { mat.emissiveFactor = linearRGBA(def.emit).slice(0, 3); if (def.emitStr) { mat.extensions = { KHR_materials_emissive_strength: { emissiveStrength: def.emitStr } }; usesEmitStrength = true; } }
       }
       materials.push(mat); matIndex.set(part.mat, materials.length - 1);
     }
@@ -404,7 +449,8 @@ function writeGLB(model) {
     meshes: [{ name: model.name, primitives }],
     materials, accessors, bufferViews, buffers: [{ byteLength: byteLen }],
   };
-  if (usesTex) { gltf.images = images; gltf.textures = textures; gltf.samplers = samplers; gltf.extensionsUsed = ["KHR_materials_emissive_strength"]; }
+  if (images.length) { gltf.images = images; gltf.textures = textures; gltf.samplers = samplers; }
+  if (usesEmitStrength) gltf.extensionsUsed = ["KHR_materials_emissive_strength"];
   // упаковка GLB
   const bin = Buffer.concat(chunks);
   let json = Buffer.from(JSON.stringify(gltf), "utf8");
@@ -423,8 +469,31 @@ function writeGLB(model) {
   return { name: model.name, tris, kb: (glb.length / 1024).toFixed(1), parts: model.parts.size };
 }
 
+// ----------------------------------------------------------------- тест-здание (реальные текстуры Poly Haven на моей геометрии)
+// палаццо-блок: реальная штукатурка (стены) + каменный трим (цоколь/карниз/пилястры)
+// + геометрические окна (тёмная рама + светящееся стекло). `node build_models.mjs test`
+function testBuilding() {
+  const m = new Model("test_building");
+  const W = 22, H = 7, D = 8, base = 1.0;
+  m.add(box(W + 0.4, base, D + 0.4), { mat: "realTrim", pos: [0, base / 2, 0] });          // цоколь (камень)
+  m.add(box(W, H, D), { mat: "realPlaster", pos: [0, base + H / 2, 0] });                   // стены (штукатурка)
+  m.add(box(W + 0.6, 0.8, D + 0.6), { mat: "realTrim", pos: [0, base + H + 0.1, 0] });      // карниз
+  m.add(box(W, 0.6, D), { mat: "graphite", pos: [0, base + H + 0.7, 0] });                  // кровля
+  // пилястры (камень) по фасадам +Z / −Z
+  const pn = 9;
+  for (let i = 0; i <= pn; i++) { const x = -W / 2 + W * i / pn; for (const z of [D / 2 + 0.12, -(D / 2 + 0.12)]) m.add(box(0.5, H - 0.4, 0.3), { mat: "realTrim", pos: [x, base + (H - 0.4) / 2 + 0.2, z] }); }
+  // окна: сетка на обоих фасадах (рама + светящееся стекло, слегка выступают)
+  const cols = 7, rows = 2;
+  for (const sz of [1, -1]) for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const x = -W / 2 + W * (c + 0.5) / cols, y = base + H * (r + 0.45) / rows;
+    m.add(box(1.3, 1.9, 0.22), { mat: "frame", pos: [x, y, sz * (D / 2 + 0.06)] });
+    m.add(box(1.02, 1.6, 0.06), { mat: "glass", pos: [x, y, sz * (D / 2 + 0.2)] });
+  }
+  return m;
+}
+
 // ----------------------------------------------------------------- main
-const builders = [smolny, winter, fortress, mariinsky, tauride, aurora];
+const builders = process.argv[2] === "test" ? [testBuilding] : [smolny, winter, fortress, mariinsky, tauride, aurora];
 console.log("Генерация low-poly моделей → assets/models/\n");
 let totalTris = 0, totalKb = 0;
 for (const b of builders) {
