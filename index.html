@@ -59,15 +59,36 @@
         <dl class="tech-meta" id="tech-meta"></dl>
       </div>
 
-      <!-- 3D-вьюер модели текущего ориентира (встраиваемый _qa.html, смена модели через postMessage) -->
-      <div class="tech-viewer">
-        <span class="tech-label">3D-модель кадра · <b id="tv-cap"></b></span>
-        <iframe id="model-view" title="3D-модель" src="./assets/models/_qa.html?key=smolny&night=1&bg=0x10151a"></iframe>
-      </div>
+      <!-- ОКНО СТАТУСА ЗАГРУЗКИ МОДЕЛЕЙ (✓ загружено / % / ✗ ошибка) — сворачиваемое -->
+      <details class="tech-load fold" id="tech-load" open>
+        <summary class="tech-label" id="ls-label">статус моделей</summary>
+        <div class="ls-list" id="ls-list"></div>
+      </details>
+
+      <!-- 3D-ВЬЮЕР ОБЪЕКТА: по клику на здание на карте оно крутится здесь под светом.
+           Сам вьюер — _qa.html (зона сессии моделей), принимает ?key=<ключ из data/models.js>. -->
+      <details class="tech-viewer fold" id="tech-viewer" open>
+        <summary class="tech-label">3D-модель · клик по зданию на карте</summary>
+        <div class="tv-stage">
+          <iframe id="model-view" title="3D-модель объекта"
+            src="./assets/models/_qa.html?key=fortress&bg=0x12181e"></iframe>
+          <div class="tv-cap" id="tv-cap">Петропавловская крепость</div>
+        </div>
+      </details>
 
       <div class="tech-vo" id="tech-vo">
         <span class="tech-label">ГЗК · полный дикторский текст</span>
         <p id="vo-full"></p>
+      </div>
+
+      <!-- ЗАМЕЧАНИЯ — заметки с привязкой к таймкоду (localStorage); под ГЗК -->
+      <div class="tech-notes" id="tech-notes">
+        <span class="tech-label">Замечания <b id="nt-count">0</b> · <span class="nt-act" id="nt-export">⧉ экспорт</span> · <span class="nt-act" id="nt-clear">очистить</span></span>
+        <div class="nt-list" id="nt-list"></div>
+        <div class="nt-add">
+          <input type="text" id="nt-input" placeholder="замечание к текущему моменту… (Enter)">
+          <button class="nt-btn" id="nt-add" title="добавить к текущему таймкоду">＋</button>
+        </div>
       </div>
 
       <!-- ПАНЕЛЬ ОСВЕЩЕНИЯ — тумблеры и настройки эффекта день/ночь и теней -->
@@ -87,6 +108,9 @@
         <div class="ctrl-row"><label for="cx-citycut">Вырез у моделей</label>
           <b class="ctrl-val" id="cx-citycut-v">280 м</b><input type="range" id="cx-citycut" min="0" max="400" step="10" autocomplete="off"></div>
         <label class="ctrl-switch"><input type="checkbox" id="cx-pads" autocomplete="off"><span>Круги под моделями</span></label>
+        <label class="ctrl-switch"><input type="checkbox" id="cx-freecam"><span>Свободная камера (зум/поворот)</span></label>
+        <label class="ctrl-switch"><input type="checkbox" id="cx-edit"><span>Правка объектов (двигать; мост — форма)</span></label>
+        <div class="bt-readout" id="bt-readout"></div>
         <span class="tech-label" style="margin-top:10px">Инструменты</span>
         <a class="tech-tool" href="tools/water_trace.html" target="_blank" rel="noopener"
            style="display:block;padding:7px 9px;margin-top:4px;border:1px solid #38424f;border-radius:7px;color:#9fd2ea;text-decoration:none;font-size:12px;background:#1a2230">🌊 Обводка воды по карте →</a>

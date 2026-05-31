@@ -94,7 +94,41 @@ html, body {
   color: var(--paper); opacity: 0.92; line-height: 1.3;
 }
 .tech-meta dd.fx { color: var(--brass); }
-.tech-vo { flex: 1; overflow-y: auto; }
+/* сворачиваемые секции техзоны (<details class="fold">) */
+.fold > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  display: flex; align-items: center; gap: 0.4em;
+}
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::after { content: "▾"; margin-left: auto; opacity: 0.7; font-size: 0.85em; }
+.fold:not([open]) > summary::after { content: "▸"; }
+
+/* окно статуса загрузки моделей */
+.tech-load { flex-shrink: 0; margin-top: 0.7em; padding-top: 0.7em; border-top: 1px solid #1c2329; }
+.ls-list { margin-top: 0.4em; display: grid; row-gap: 2px; font-family: "20 Kopeek", monospace; font-size: clamp(9px,1.1vh,12px); }
+.ls-row { display: grid; grid-template-columns: 2.2em 5.5em 1fr; align-items: baseline; column-gap: 0.5em; }
+.ls-row .ls-i { text-align: right; font-weight: 600; }
+.ls-row .ls-k { color: var(--paper); opacity: 0.92; }
+.ls-row .ls-f { color: var(--window); opacity: 0.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ls-row.ok   .ls-i { color: #7ec46f; }
+.ls-row.err  .ls-i { color: #e2412b; }
+.ls-row.load .ls-i, .ls-row.wait .ls-i { color: var(--brass); }
+.ls-row.err  .ls-k { color: #e2412b; }
+
+/* 3D-вьюер объекта в техзоне (iframe → _qa.html) */
+.tech-viewer { flex-shrink: 0; margin-top: 0.7em; padding-top: 0.7em; border-top: 1px solid #1c2329; }
+.tv-stage {
+  position: relative; width: 100%; height: clamp(160px, 26vh, 260px); margin-top: 0.45em;
+  border: 1px solid #1c2329; overflow: hidden; background: #0b1116;
+}
+.tv-stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+.tv-cap {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 0.3em 0.6em;
+  font-family: "20 Kopeek", monospace; font-size: clamp(10px,1.2vh,13px); letter-spacing: 0.03em;
+  color: var(--brass); background: linear-gradient(0deg, rgba(6,8,9,0.85), rgba(6,8,9,0));
+  pointer-events: none; text-align: center;
+}
+.tech-vo { flex: 1; overflow-y: auto; min-height: 3em; }
 .tech-label {
   font-family: "20 Kopeek", monospace; font-size: 10px; letter-spacing: 0.18em;
   text-transform: uppercase; color: var(--window); opacity: 0.6;
@@ -120,13 +154,34 @@ html, body {
   accent-color: var(--brass); cursor: pointer; background: rgba(157,163,166,0.3);
 }
 .ctrl-val { color: var(--brass); font-weight: 600; justify-self: end; min-width: 3.2em; text-align: right; }
+.bt-readout {
+  font-family: "20 Kopeek", monospace; font-size: clamp(9px,1.05vh,12px); line-height: 1.4;
+  color: var(--window); opacity: 0.9; min-height: 1.2em;
+}
+.bt-readout b { color: var(--brass); }
+.bt-copy { color: var(--brass); cursor: pointer; text-decoration: underline dotted; }
 
-/* 3D-вьюер модели текущего ориентира в техзоне (встраиваемый _qa.html) */
-.tech-viewer { flex-shrink: 0; margin-top: 0.7em; padding-top: 0.7em; border-top: 1px solid #1c2329;
+/* замечания — заметки с привязкой к таймкоду */
+.tech-notes { flex-shrink: 0; margin-top: 0.7em; padding-top: 0.7em; border-top: 1px solid #1c2329;
   display: flex; flex-direction: column; gap: 0.4em; }
-.tech-viewer .tech-label b { color: var(--brass); font-weight: 600; }
-#model-view { width: 100%; height: clamp(150px, 22vh, 230px); border: 0; border-radius: 5px;
-  background: #10151a; display: block; }
+.tech-notes .nt-act { color: var(--brass); cursor: pointer; text-decoration: underline dotted; }
+.nt-list { max-height: clamp(70px, 16vh, 180px); overflow-y: auto; display: flex; flex-direction: column; gap: 3px;
+  font-family: "20 Kopeek", monospace; }
+.nt-row { display: grid; grid-template-columns: auto 1fr auto; gap: 0.5em; align-items: baseline;
+  font-size: clamp(10px,1.2vh,13px); line-height: 1.3; }
+.nt-row .nt-t { color: var(--brass); cursor: pointer; white-space: nowrap; font-weight: 600; }
+.nt-row .nt-txt { color: var(--paper); opacity: 0.92; word-break: break-word; }
+.nt-row .nt-shot { color: var(--window); opacity: 0.65; }
+.nt-row .nt-x { color: var(--window); cursor: pointer; opacity: 0.5; }
+.nt-row .nt-x:hover { color: #e2412b; opacity: 1; }
+.nt-add { display: flex; gap: 0.4em; }
+.nt-add input { flex: 1; min-width: 0; background: #0b1116; border: 1px solid #1c2329; color: var(--paper);
+  font-family: "20 Kopeek", monospace; font-size: clamp(10px,1.2vh,13px); padding: 0.35em 0.5em; }
+.nt-add input::placeholder { color: var(--window); opacity: 0.6; }
+.nt-add input:focus { outline: none; border-color: var(--brass); }
+.nt-btn { background: rgba(210,183,115,0.18); border: 1px solid var(--brass); color: var(--brass);
+  cursor: pointer; padding: 0 0.7em; font-size: 1.1em; line-height: 1; }
+.nt-btn:hover { background: rgba(210,183,115,0.32); }
 
 /* большие часы + календарь (время события) */
 .clockbox {
@@ -303,6 +358,17 @@ html, body {
   transition: opacity 0.25s; pointer-events: none;
 }
 .tick.active .lbl, .track:hover .tick:hover .lbl { opacity: 0.92; }
+/* шкала видео-времени (метки каждые 30с) */
+.tmark { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 1px; height: 9px;
+  background: rgba(157,163,166,0.45); pointer-events: none; }
+.tmark-lbl { position: absolute; top: 7px; left: 50%; transform: translateX(-50%);
+  font-family: "20 Kopeek", monospace; font-size: 8px; letter-spacing: 0.02em;
+  color: var(--window); opacity: 0.55; white-space: nowrap; }
+/* маркеры замечаний на дорожке */
+.nmark { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 9px; height: 9px;
+  border-radius: 50%; background: #6fb3e0; border: 1px solid #0b1116; cursor: pointer; z-index: 3;
+  box-shadow: 0 0 0 2px rgba(111,179,224,0.3); }
+.nmark:hover { background: #a9d4f5; box-shadow: 0 0 0 3px rgba(111,179,224,0.5); }
 .clock {
   flex-shrink: 0; font-family: "20 Kopeek", monospace; font-size: clamp(12px,1.3vh,18px);
   letter-spacing: 0.08em; color: var(--paper); opacity: 0.8; min-width: 7.5em; text-align: right;

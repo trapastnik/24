@@ -11,6 +11,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 // ----------------------------------------------------------------- palette
 const COL = {
@@ -69,9 +70,28 @@ const MODEL_CFG = MODELS.cfg;
 const MODEL_DIR = MODELS.dir;
 const modelCache = {};        // key → нормированный THREE.Group (шаблон для clone)
 let modelsReady = false;
+// статус загрузки каждой модели (для окна статуса в техзоне)
+const modelStatus = {};        // key → { state:'wait'|'load'|'ok'|'err', file, pct }
+function renderLoadStatus() {
+  const box = document.getElementById("ls-list"); if (!box) return;
+  const keys = Object.keys(MODEL_CFG);
+  box.innerHTML = keys.map((k) => {
+    const s = modelStatus[k] || { state: "wait" };
+    let icon = "·", cls = "wait";
+    if (s.state === "ok") { icon = "✓"; cls = "ok"; }
+    else if (s.state === "err") { icon = "✗"; cls = "err"; }
+    else if (s.state === "load") { icon = s.pct != null ? s.pct + "%" : "…"; cls = "load"; }
+    return `<div class="ls-row ${cls}"><span class="ls-i">${icon}</span><span class="ls-k">${k}</span><span class="ls-f">${s.file || MODEL_CFG[k].file}</span></div>`;
+  }).join("");
+  const ok = keys.filter((k) => modelStatus[k] && modelStatus[k].state === "ok").length;
+  const err = keys.filter((k) => modelStatus[k] && modelStatus[k].state === "err").length;
+  const lbl = document.getElementById("ls-label");
+  if (lbl) lbl.textContent = `статус моделей · ${ok}/${keys.length}` + (err ? ` · ошибок: ${err}` : "");
+}
 function preloadModels() {
   const loader = new GLTFLoader();
   const jobs = Object.entries(MODEL_CFG).map(([key, cfg]) => new Promise((res) => {
+    modelStatus[key] = { state: "load", file: cfg.file, pct: null };
     loader.load(MODEL_DIR + cfg.file, (gltf) => {
       const g = gltf.scene;
       // нормировка: центр по XZ, база на y=0, масштаб по горизонтальному габариту
@@ -82,9 +102,11 @@ function preloadModels() {
       const root = new THREE.Group(); root.add(g);
       root.scale.setScalar(s); root.rotation.y = cfg.yaw || 0;
       modelCache[key] = root;
-      res();
-    }, undefined, (err) => { console.warn("МТК24: модель не загрузилась", cfg.file, err); res(); });
+      modelStatus[key].state = "ok"; renderLoadStatus(); res();
+    }, (ev) => { if (ev && ev.lengthComputable) { modelStatus[key].pct = Math.round(ev.loaded / ev.total * 100); renderLoadStatus(); } },
+       (err) => { console.warn("МТК24: модель не загрузилась", cfg.file, err); modelStatus[key].state = "err"; renderLoadStatus(); res(); });
   }));
+  renderLoadStatus();
   return Promise.all(jobs).then(() => { modelsReady = true; });
 }
 
@@ -101,6 +123,18 @@ scene.background = new THREE.Color(COL.ink);
 scene.fog = new THREE.Fog(COL.ink, 220, 480);
 
 const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 3000);
+
+// OrbitControls — ручной осмотр карты (зум/поворот/панорама); тумблер «Свободная камера».
+// Выключены по умолчанию: при выкл сценой управляет покадровая камера (см. frame).
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.minDistance = 15; controls.maxDistance = 480; controls.maxPolarAngle = 1.45;
+controls.enabled = false;
+function setFreeCam(on) {
+  if (on) controls.target.copy(camTarget);          // взять текущую точку взгляда
+  else camTarget.copy(controls.target);             // вернуть её покадровой камере (без рывка)
+  FX_SET.freeCam = on; controls.enabled = on; if (on) controls.update();
+}
 
 // lighting (for 3D models; map itself is unlit/basic — её яркость ведём тинтом)
 const amb = new THREE.AmbientLight(0xffffff, 0.6); scene.add(amb);
@@ -242,7 +276,7 @@ const BASE = { sunC: C(0xfff1d6), sunI: 1.1, ambC: C(0xffffff), ambI: 0.6, mapC:
 const BASE_POS = new THREE.Vector3(-60, 120, 40);
 const sunGoalPos = new THREE.Vector3().copy(BASE_POS);
 // настройки из техзоны (живая правка слайдерами/тумблерами)
-const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, nightLights: true, cityCut: 1.4, pads: false, city: true };
+const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, nightLights: true, cityCut: 1.4, pads: false, city: true, editObjects: false, freeCam: false };
 let nightF = 0;     // 0 день … 1 ночь — обновляется в updateLighting, читается водой/прочими
 
 function updateLighting(sm, dt, snap) {
@@ -383,10 +417,82 @@ function markerTex(force, state) {
 // силы и пульс. «Захват» (becomes:"red") монотонен по кадрам: раз красный — остаётся
 // красным до конца (корректно и при перемотке).
 const objGroup = new THREE.Group(); scene.add(objGroup);
-let objects = {};        // key → { mesh, isModel, pad, baseForce, captureShot, at, isActive, force, pulse }
+const labelsGroup = new THREE.Group(); scene.add(labelsGroup);   // подписи-маркеры над мостами
+let objects = {};        // key → { mesh, isModel, pad, baseForce, captureShot, at, isActive, force, pulse, label }
+const LABEL_Y = 4.5;     // высота подписи над объектом (world units)
+function makeLabel(text) {
+  const fs = 60, pad = 10;
+  const m = document.createElement("canvas").getContext("2d");
+  m.font = `600 ${fs}px "20 Kopeek", Arial, sans-serif`;
+  const tw = Math.ceil(m.measureText(text).width);
+  const cv = document.createElement("canvas");
+  cv.width = tw + pad * 2; cv.height = fs + pad * 2;
+  const g = cv.getContext("2d");
+  g.font = `600 ${fs}px "20 Kopeek", Arial, sans-serif`;
+  g.textBaseline = "middle"; g.textAlign = "center";
+  g.lineWidth = 7; g.lineJoin = "round"; g.strokeStyle = "rgba(6,8,9,0.92)";
+  g.strokeText(text, cv.width / 2, cv.height / 2);
+  g.fillStyle = "#F2DCA6"; g.fillText(text, cv.width / 2, cv.height / 2);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0.95 }));
+  const h = 1.0; sp.scale.set(h * cv.width / cv.height, h, 1); sp.renderOrder = 30;
+  return sp;
+}
 
 const HERO = ["smolny", "winter", "fortress", "mariinsky", "tauride"];
 const DIM_OP = 0.22, DIM_MODEL_OP = 0.3;     // прозрачность «не в фокусе»
+
+// мост — единый процедурный силуэт на все мосты (настил + перила + опоры). Цвет/прозрачность
+// задаёт updateObjects через общий материал. Размещение: yaw (поворот), len/wide (размер) — на тюнинг.
+const BRIDGE_DEFAULT = { yaw: 0, len: 11, wide: 2.6 };
+const BRIDGE_CFG = {         // выставлено вживую через «Правку объектов» (yaw в радианах)
+  grenadersky_br:   { yaw: 0.13962634015954634, len: 3, wide: 1.2 },
+  sampsonievsky_br: { yaw: 0.20943951023931956, len: 4, wide: 1.4 },
+  liteyny_br:       { yaw: 1.6755160819145571,  len: 3, wide: 1.6 },
+  troitsky_br:      { yaw: 1.9547687622336503,  len: 5, wide: 1.2 },
+  dvortsovy_br:     { yaw: 2.0943951023931966,  len: 2, wide: 0.6 },
+  nikolaevsky_br:   { yaw: 2.16420827247297,    len: 2, wide: 1 },
+};
+function bridgeCfg(key) { return { ...BRIDGE_DEFAULT, ...(BRIDGE_CFG[key] || {}) }; }
+// ручные сдвиги позиций объектов (перетаскивание в режиме правки) → потом в data/locations.js
+const POS = {};              // key → { u, v }
+function objUV(key) { return POS[key] || loc(key); }
+// scene-side оверрайд поворота для зданий/боксов (мосты — в BRIDGE_CFG; модели по умолч. — MODEL_CFG.yaw)
+const YAW = {                // key → радианы (повороты зданий, выставлено в редакторе)
+  smolny: -1.6057029118347839, fortress: 1.884955592153877,
+  winter: 0.5585053606381855, aurora: 0.48869219055841223,
+};
+function objYaw(key) { return YAW[key] != null ? YAW[key] : (MODEL_CFG[key] ? (MODEL_CFG[key].yaw || 0) : 0); }
+// scene-side оверрайд равномерного масштаба зданий/боксов (множитель к базовому размеру)
+const SCALE = {              // key → множитель размера (выставлено в редакторе)
+  smolny: 0.22, fortress: 0.436, winter: 0.614, aurora: 0.481, mariinsky: 0.711,
+  telegraph_central: 0.436, telegraph_agency: 0.481, war_ministry: 0.376, telephone_central: 0.481,
+  post_main: 0.436, power_station: 0.436, gosbank: 0.376, nik_station: 0.376,
+  balt_station: 0.358, warsaw_station: 0.358, tsarskoselsky: 0.376, finland_station: 0.395,
+  primorsky: 0.557, typography_trud: 0.458, barracks_litovsky: 0.295, admiralty: 0.295, fofanova: 0.677,
+};
+function objScale(key) { return SCALE[key] || 1; }
+function applyScale(key) {   // живое применение масштаба к объекту
+  const o = objects[key]; if (!o) return;
+  const sc = objScale(key);
+  o.mesh.scale.setScalar((o.baseScale || 1) * sc);
+  if (!o.isModel && o.fh) o.mesh.position.y = o.fh * sc / 2;   // бокс: база на земле
+}
+function makeBridge(mat, len, wide) {
+  const g = new THREE.Group(), deckY = 1.3;
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(len, 0.45, wide), mat);
+  deck.position.y = deckY; g.add(deck);
+  for (const sgn of [-1, 1]) {                       // перила по краям настила
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.5, 0.18), mat);
+    rail.position.set(0, deckY + 0.35, sgn * (wide / 2 - 0.09)); g.add(rail);
+  }
+  for (let i = 0, nP = 3; i < nP; i++) {             // опоры (быки) до воды
+    const pier = new THREE.Mesh(new THREE.BoxGeometry(0.7, deckY, wide * 0.8), mat);
+    pier.position.set(-len / 2 + (len / (nP - 1)) * i, deckY / 2, 0); g.add(pier);
+  }
+  return g;
+}
 
 function addForcePad(w, size) {
   // Ф6: мягкая «лужа» цвета силы под объектом. NormalBlending (НЕ аддитив) — не засвечивает
@@ -411,7 +517,7 @@ function objectIndex() {
   return idx;
 }
 function buildObjects() {
-  objGroup.clear(); objects = {};
+  objGroup.clear(); labelsGroup.clear(); objects = {};
   const idx = objectIndex();
   // ориентиры с 3D-моделью (data/models.js) присутствуют ВСЕГДА как постоянные фоновые
   // объекты, даже если не заданы ни в одном кадре сценария (напр. Таврический). Сила —
@@ -422,7 +528,7 @@ function buildObjects() {
   }
   for (const key in idx) {
     const L = loc(key); if (!L || L.u == null) continue;
-    const meta = idx[key], w = uvToWorld(L.u, L.v, 0), baseForce = meta.vrk ? "vrk" : "pg";
+    const meta = idx[key], uv = POS[key] || L, w = uvToWorld(uv.u, uv.v, 0), baseForce = meta.vrk ? "vrk" : "pg";
     const rec = { key, baseForce, captureShot: meta.captureShot, at: meta.at,
                   isActive: false, force: baseForce, pulse: null };
     if (modelCache[key]) {
@@ -431,16 +537,32 @@ function buildObjects() {
         c.material = c.material.clone(); c.material.transparent = true; c.castShadow = true;
         c.userData.emHex = c.material.emissive ? c.material.emissive.getHex() : 0;
         c.userData.emInt = c.material.emissiveIntensity ?? 1;
+        c.userData.objKey = key;                    // для клика-выбора (3D-вьюер)
       }});
-      model.position.set(w.x, 0, w.z); objGroup.add(model);
+      model.position.set(w.x, 0, w.z);
+      if (YAW[key] != null) model.rotation.y = YAW[key];   // оверрайд поворота из редактора
+      rec.baseScale = model.scale.x; model.scale.setScalar(rec.baseScale * objScale(key));   // оверрайд масштаба
+      objGroup.add(model);
       rec.mesh = model; rec.isModel = true; rec.pad = addForcePad(w, MODEL_CFG[key].size);
-    } else {
-      const isBridge = /_br$/.test(key), hero = HERO.includes(key);
-      const fw = isBridge ? 2.0 : (hero ? 3.6 : 2.6), fh = isBridge ? 1.2 : (hero ? 7.0 : 4.2);
+    } else if (/_br$/.test(key)) {                  // МОСТ — процедурный силуэт
+      const bc = bridgeCfg(key);
+      const mat = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.1, transparent: true });
+      const grp = makeBridge(mat, bc.len, bc.wide);
+      grp.position.set(w.x, 0, w.z); grp.rotation.y = bc.yaw;
+      grp.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.userData.objKey = key; } });
+      objGroup.add(grp);
+      rec.mesh = grp; rec.isModel = false; rec.isBridge = true; rec.bridgeMat = mat;
+      const lbl = makeLabel((L && L.name) || key);   // подпись-маркер над мостом
+      lbl.position.set(w.x, LABEL_Y, w.z); labelsGroup.add(lbl); rec.label = lbl;
+    } else {                                          // прочие объекты без .glb — объём-бокс
+      const hero = HERO.includes(key);
+      const fw = hero ? 3.6 : 2.6, fh = hero ? 7.0 : 4.2;
       const box = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, fw),
         new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.15, transparent: true }));
-      box.castShadow = true; box.position.set(w.x, fh / 2, w.z); objGroup.add(box);
-      rec.mesh = box; rec.isModel = false;
+      const sc = objScale(key);
+      box.castShadow = true; box.userData.objKey = key; box.scale.setScalar(sc);
+      box.position.set(w.x, fh * sc / 2, w.z); box.rotation.y = YAW[key] || 0; objGroup.add(box);
+      rec.mesh = box; rec.isModel = false; rec.baseScale = 1; rec.fh = fh;
     }
     objects[key] = rec;
   }
@@ -462,7 +584,7 @@ function isCaptured(o, idx, lp) {
   if (idx > o.captureShot) return true;
   return idx === o.captureShot && lp >= (o.at || 0);
 }
-function setOpacity(m, op) { m.opacity = op; m.transparent = op < 1; m.depthWrite = op >= 1; }
+function setOpacity(m, op) { m.opacity = op; m.transparent = op < 1; m.depthWrite = true; }  // depthWrite всегда — приглушённый объект перекрывает тень под/за собой (не просвечивает)
 // покадрово: прозрачность/цвет/пульс по фокусу и захвату
 function updateObjects(lp, time) {
   for (const key in objects) {
@@ -470,10 +592,12 @@ function updateObjects(lp, time) {
     let pulseE = null;
     if (act && o.pulse) { const fast = o.pulse === "fast"; pulseE = 0.3 + 0.6 * Math.abs(Math.sin(time * (fast ? 7 : 3.2))); }
     if (o.isModel) {
-      const op = act ? 1.0 : DIM_MODEL_OP;
+      const op = act ? 1.0 : DIM_MODEL_OP, pads = FX_SET.pads;
+      // c кругами: модель — только красная при захвате; без кругов: подсветка принадлежности эмиссией
       o.mesh.traverse((c) => { if (!c.isMesh) return; const m = c.material; setOpacity(m, op);
         if (m.emissive) {
-          if (red) { m.emissive.setHex(COL.redLight); m.emissiveIntensity = act ? 0.5 : 0.22; }
+          if (red) { m.emissive.setHex(COL.redLight); m.emissiveIntensity = pulseE != null ? pulseE : (act ? 0.5 : 0.22); }
+          else if (!pads && act) { m.emissive.setHex(force === "vrk" ? COL.vrk : COL.pg); m.emissiveIntensity = pulseE != null ? pulseE : 0.28; }
           else { m.emissive.setHex(c.userData.emHex); m.emissiveIntensity = c.userData.emInt; }
         }});
       if (o.pad) { o.pad.visible = FX_SET.pads; const pm = o.pad.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.graphite);
@@ -481,11 +605,12 @@ function updateObjects(lp, time) {
         const base = act ? (red ? 0.20 : force === "vrk" ? 0.18 : 0.10) : (red ? 0.08 : 0.035);
         pm.opacity = pulseE != null ? 0.09 + 0.26 * pulseE : base;
       }
-    } else {
-      const m = o.mesh.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.pg);
+    } else {                                          // бокс ИЛИ мост — единый материал
+      const m = o.bridgeMat || o.mesh.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.pg);
       m.color.setHex(col); m.emissive.setHex(col);
       m.emissiveIntensity = pulseE != null ? pulseE : (act ? (red ? 0.5 : force === "vrk" ? 0.4 : 0.16) : (red ? 0.18 : 0.05));
       setOpacity(m, act ? 1.0 : DIM_OP);
+      if (o.label) o.label.visible = act || FX_SET.editObjects;   // подпись — в фокусе/в правке
     }
   }
 }
@@ -638,6 +763,7 @@ const FX_BUILD = {
     let boomed = false;
     fxItems.push({ update(lp, time) {
       const fp = fpOf(lp, at);
+      if (!boomed && fp >= 0.33) { boomed = true; if (window.MTK24_AUDIO) MTK24_AUDIO.fx("shot"); }   // бум на дульной вспышке
       let o = tri(fp, 0.10, 0.12); signal.material.opacity = o; signal.scale.setScalar(4 + 6 * o);
       o = tri(fp, 0.33, 0.10); muzzle.material.opacity = 1.2 * o; muzzle.scale.setScalar(4 + 12 * o);
       if (muzzleLight) { muzzleLight.position.set(aur.x, 10, aur.z); muzzleLight.intensity = 700 * o; }   // Ф2: вспышка = реальный свет
@@ -732,6 +858,7 @@ const hud = {
   ill: el("ill"), illImg: el("ill-img"), illCap: el("ill-cap"),
   fill: el("trackFill"), clock: el("clock"), track: el("track"), play: el("btnPlay"),
   evTime: el("ev-time"), evDate: el("ev-date"), voFull: el("vo-full"), flash: el("fx-flash"),
+  modelView: el("model-view"), tvCap: el("tv-cap"),
   techScene: el("tech-scene"), techTitle: el("tech-title"), techMeta: el("tech-meta"),
   mdlView: el("model-view"), tvCap: el("tv-cap"),
 };
@@ -775,6 +902,27 @@ function buildTicks() {
     hud.track.appendChild(d); ticks.push(d);
   });
 }
+// шкала видео-времени: метки каждые 30 с с таймкодом (ориентир)
+function buildTimeMarks() {
+  for (let ts = 30; ts < SCN.duration; ts += 30) {
+    const m = document.createElement("div"); m.className = "tmark";
+    m.style.left = (ts / SCN.duration * 100) + "%";
+    const l = document.createElement("span"); l.className = "tmark-lbl"; l.textContent = fmt(ts);
+    m.appendChild(l); hud.track.appendChild(m);
+  }
+}
+// маркеры замечаний на дорожке (клик — переход к замечанию)
+function renderNoteMarks() {
+  const track = hud.track; if (!track) return;
+  track.querySelectorAll(".nmark").forEach((m) => m.remove());
+  notes.forEach((n) => {
+    const m = document.createElement("div"); m.className = "nmark";
+    m.style.left = (n.t / SCN.duration * 100) + "%";
+    m.title = fmt(n.t) + " · " + n.text;
+    m.onclick = (e) => { e.stopPropagation(); t = n.t; curIdx = -1; };
+    track.appendChild(m);
+  });
+}
 function applyShot(i) {
   const s = SCN.shots[i];
   hud.nar.classList.add("swap");
@@ -809,7 +957,8 @@ function applyShot(i) {
   setFraming(s);
   applyShotToObjects(i); buildRoutes(s); buildFx(s);
   if (window.MTK24_AUDIO) window.MTK24_AUDIO.shot(i, s);   // звук кадра (гул/щелчки/акцент)
-  // 3D-вьюер в техзоне: показать модель ориентира текущего кадра (iframe _qa.html через postMessage)
+  // 3D-вьюер в техзоне: авто-показ модели ориентира текущего кадра (iframe _qa.html через postMessage).
+  // Клик по зданию (showModel/pickKeyAt) — отдельный триггер того же вьюера (см. ниже).
   if (hud.mdlView && hud.mdlView.contentWindow) {
     const keys = (s.focus || []).concat((s.points || []).map((p) => p.key));
     const mk = keys.find((k) => MODEL_CFG[k]);
@@ -832,10 +981,17 @@ function tick(dt, snap) {
   const s = SCN.shots[i];
   const lp = Math.min(1, Math.max(0, (t - s.t0) / Math.max(0.001, s.t1 - s.t0)));
 
-  const k = snap ? 1 : 1 - Math.pow(0.0016, dt);    // ease camera
-  camera.position.lerp(camGoalPos, k);
-  camTarget.lerp(camGoalLook, k);
-  camera.lookAt(camTarget);
+  // камера: свободный осмотр (OrbitControls) ИЛИ покадровый наезд по сценарию.
+  // Точные аудио-хуки (шаги/радио) — НЕ здесь: шаги по движению lenin_route (updateRoutes),
+  // радио по окну fp телеграфа (FX) — см. ниже. Здесь только камера.
+  if (FX_SET.freeCam) {
+    controls.update();
+  } else {
+    const k = snap ? 1 : 1 - Math.pow(0.0016, dt);    // ease camera (snap=мгновенно — инвариант)
+    camera.position.lerp(camGoalPos, k);
+    camTarget.lerp(camGoalLook, k);
+    camera.lookAt(camTarget);
+  }
 
   updateObjects(lp, animT);
   updateRoutes(lp);
@@ -875,6 +1031,8 @@ hud.track.addEventListener("click", (e) => {
   curIdx = -1;
 });
 window.addEventListener("keydown", (e) => {
+  if (/^(INPUT|TEXTAREA)$/.test(e.target && e.target.tagName)) return;   // печатаем в поле — не дёргаем шорткаты
+  if (FX_SET.editObjects && sel && editKey(e)) return;   // правка объекта перехватывает стрелки
   if (e.code === "Space") { e.preventDefault(); hud.play.click(); }
   else if (e.code === "ArrowRight") { const i = Math.min(SCN.shots.length - 1, shotIndexAt(t) + 1); t = SCN.shots[i].t0; curIdx = -1; }
   else if (e.code === "ArrowLeft") { const i = Math.max(0, shotIndexAt(t) - 1); t = SCN.shots[i].t0; curIdx = -1; }
@@ -943,6 +1101,121 @@ window.addEventListener("keydown", (e) => {                      // R — рен
   }
 });
 
+// ----------------------------------------------------------------- 3D-вьюер объекта (клик по карте → _qa.html)
+const picker = new THREE.Raycaster();
+function pickKeyAt(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+  picker.setFromCamera(ndc, camera);
+  for (const h of picker.intersectObjects(objGroup.children, true)) {
+    let o = h.object;
+    while (o && o.userData.objKey == null) o = o.parent;
+    if (o && o.userData.objKey != null) return o.userData.objKey;
+  }
+  return null;
+}
+function showModel(key) {                            // переключаем модель в _qa.html без перезагрузки
+  if (!hud.modelView || !MODEL_CFG[key]) return;
+  const cw = hud.modelView.contentWindow;
+  if (cw) cw.postMessage({ mtk24Model: key }, "*");
+  const L = loc(key);
+  if (hud.tvCap) hud.tvCap.textContent = (L && L.name) ? L.name : key;
+}
+// ----- выбор/перетаскивание объектов + детект драга (поворот камеры не должен «кликать») -----
+let downXY = null, didDrag = false, dragObj = null, sel = null;
+const GROUND = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);     // плоскость карты (y=0)
+function worldFromPointer(cx, cy) {
+  const r = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+  picker.setFromCamera(ndc, camera);
+  const pt = new THREE.Vector3();
+  return picker.ray.intersectPlane(GROUND, pt) ? pt : null;
+}
+canvas.addEventListener("pointerdown", (e) => {
+  downXY = [e.clientX, e.clientY]; didDrag = false;
+  if (FX_SET.editObjects) {
+    const key = pickKeyAt(e.clientX, e.clientY);
+    if (key) { sel = key; dragObj = key; controls.enabled = false; renderEditor(); }   // взять для перетаскивания
+  }
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (downXY && Math.hypot(e.clientX - downXY[0], e.clientY - downXY[1]) > 5) didDrag = true;
+  if (dragObj && didDrag) {                           // перемещение объекта по карте
+    const pt = worldFromPointer(e.clientX, e.clientY);
+    if (pt) {
+      POS[dragObj] = { u: +(pt.x / PW + 0.5).toFixed(4), v: +(pt.z / PD + 0.5).toFixed(4) };
+      const o = objects[dragObj]; if (o) { o.mesh.position.x = pt.x; o.mesh.position.z = pt.z;
+        if (o.label) { o.label.position.x = pt.x; o.label.position.z = pt.z; } }
+      renderEditor();
+    }
+    return;
+  }
+  if (FX_SET.freeCam || FX_SET.editObjects) { canvas.style.cursor = "grab"; return; }
+  const key = pickKeyAt(e.clientX, e.clientY);
+  canvas.style.cursor = key && MODEL_CFG[key] ? "pointer" : "default";
+});
+canvas.addEventListener("pointerup", () => { downXY = null; if (dragObj) { dragObj = null; if (FX_SET.freeCam) controls.enabled = true; } });
+canvas.addEventListener("click", (e) => {
+  if (didDrag) { didDrag = false; return; }          // это был драг (камера/перемещение), не клик
+  const key = pickKeyAt(e.clientX, e.clientY);
+  if (!key) return;
+  if (FX_SET.editObjects) { sel = key; renderEditor(); return; }  // режим правки — выбрать объект
+  if (MODEL_CFG[key]) showModel(key);                             // иначе — 3D-вьюер
+});
+
+// ----------------------------------------------------------------- редактор объектов (двигать; мост — форма/поворот)
+function rebuildBridge(key) {                        // пересобрать мост под текущий BRIDGE_CFG/позицию
+  const o = objects[key]; if (!o || !o.isBridge) return;
+  const uv = objUV(key), w = uvToWorld(uv.u, uv.v, 0), bc = bridgeCfg(key);
+  objGroup.remove(o.mesh);
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.1, transparent: true });
+  const grp = makeBridge(mat, bc.len, bc.wide);
+  grp.position.set(w.x, 0, w.z); grp.rotation.y = bc.yaw;
+  grp.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.userData.objKey = key; } });
+  objGroup.add(grp); o.mesh = grp; o.bridgeMat = mat;
+}
+function renderEditor() {
+  const box = document.getElementById("bt-readout"); if (!box) return;
+  if (!FX_SET.editObjects) { box.innerHTML = ""; return; }
+  if (!sel) { box.textContent = "тащи мышью · ←/→ поворот · ↑/↓ масштаб (мост — длина) · , / . ширина моста"; return; }
+  const uv = objUV(sel) || { u: 0, v: 0 }, isBr = /_br$/.test(sel);
+  let s = `<b>${sel}</b> · u ${(+uv.u).toFixed(3)} v ${(+uv.v).toFixed(3)}`;
+  if (isBr) { const c = bridgeCfg(sel); s += ` · ${Math.round(c.yaw * 180 / Math.PI)}° дл ${c.len.toFixed(0)} шир ${c.wide.toFixed(1)}`; }
+  else { s += ` · ${Math.round(objYaw(sel) * 180 / Math.PI)}° · ×${objScale(sel).toFixed(2)}`; }
+  box.innerHTML = s + ` · <span class="bt-copy" id="bt-copy">⧉ конфиг</span>`;
+  const cp = document.getElementById("bt-copy");
+  if (cp) cp.onclick = () => {
+    const t = "POS = " + JSON.stringify(POS) + ";\nYAW = " + JSON.stringify(YAW) + ";\nSCALE = " + JSON.stringify(SCALE) + ";\nBRIDGE_CFG = " + JSON.stringify(BRIDGE_CFG) + ";";
+    if (navigator.clipboard) navigator.clipboard.writeText(t); console.log(t); cp.textContent = "✓ скопировано";
+  };
+}
+function editKey(e) {                                 // ←/→ поворот (все); ↑/↓ , . форма (только мост)
+  let hit = true;
+  if (/_br$/.test(sel)) {                            // МОСТ — поворот + форма
+    const c = BRIDGE_CFG[sel] || (BRIDGE_CFG[sel] = { ...bridgeCfg(sel) });
+    let rebuild = false;
+    if (e.code === "ArrowLeft") c.yaw -= Math.PI / 45;
+    else if (e.code === "ArrowRight") c.yaw += Math.PI / 45;
+    else if (e.code === "ArrowUp") { c.len += 1; rebuild = true; }
+    else if (e.code === "ArrowDown") { c.len = Math.max(2, c.len - 1); rebuild = true; }
+    else if (e.code === "Comma") { c.wide = Math.max(0.6, +(c.wide - 0.2).toFixed(2)); rebuild = true; }
+    else if (e.code === "Period") { c.wide = +(c.wide + 0.2).toFixed(2); rebuild = true; }
+    else hit = false;
+    if (hit) { e.preventDefault(); if (rebuild) rebuildBridge(sel); else objects[sel].mesh.rotation.y = c.yaw; renderEditor(); }
+  } else {                                           // здание/бокс — поворот (←/→) + масштаб (↑/↓)
+    if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
+      const y = objYaw(sel) + (e.code === "ArrowRight" ? 1 : -1) * Math.PI / 45;
+      YAW[sel] = y; if (objects[sel]) objects[sel].mesh.rotation.y = y;
+    } else if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+      SCALE[sel] = +(objScale(sel) * (e.code === "ArrowUp" ? 1.05 : 1 / 1.05)).toFixed(3);
+      applyScale(sel);
+    } else hit = false;
+    if (hit) { e.preventDefault(); renderEditor(); }
+  }
+  return hit;
+}
+
 // ----------------------------------------------------------------- working screen (размер ТЗ)
 const WORK_ASPECT = 679 / 592;     // ≈1.147 — bbox точной формы экрана (in/размер 24.PNG)
 const TRANSPORT_H = 48;            // нижняя полоса таймлайна, px
@@ -1001,6 +1274,13 @@ function bindControls() {
   if (city) { city.checked = FX_SET.city; city.addEventListener("change", () => { FX_SET.city = city.checked; if (cityMassing) cityMassing.visible = FX_SET.city; }); }
   const postCx = $("cx-post");
   if (postCx) postCx.addEventListener("change", () => { post.enabled = postCx.checked; syncPostUI(); });
+  const edit = $("cx-edit");
+  if (edit) { edit.checked = FX_SET.editObjects;
+    edit.addEventListener("change", () => { FX_SET.editObjects = edit.checked; if (!edit.checked) sel = null; renderEditor(); }); }
+  const freecam = $("cx-freecam");
+  if (freecam) { freecam.checked = FX_SET.freeCam;
+    freecam.addEventListener("change", () => setFreeCam(freecam.checked)); }
+  renderEditor();
   syncPostUI();
 }
 
@@ -1138,9 +1418,47 @@ async function buildCityMassing() {
   if (await loadCityData()) { rebuildCityMassing(); buildWater(); }
 }
 
+// ----------------------------------------------------------------- замечания (заметки с привязкой к таймингу; localStorage)
+let notes = [];
+const NOTES_KEY = "mtk24_notes";
+const esc = (s) => s.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+function loadNotes() { try { notes = JSON.parse(localStorage.getItem(NOTES_KEY) || "[]"); } catch (e) { notes = []; } }
+function saveNotes() { try { localStorage.setItem(NOTES_KEY, JSON.stringify(notes)); } catch (e) {} }
+function addNote(text) {
+  text = (text || "").trim(); if (!text) return;
+  const i = shotIndexAt(t), s = SCN.shots[i];
+  notes.push({ t: +t.toFixed(2), text, shot: sceneLabel(i) + (s.title ? " «" + s.title + "»" : "") });
+  notes.sort((a, b) => a.t - b.t); saveNotes(); renderNotes();
+}
+function renderNotes() {
+  const box = document.getElementById("nt-list"); if (!box) return;
+  box.innerHTML = notes.map((n, k) =>
+    `<div class="nt-row"><span class="nt-t" data-k="${k}">${fmt(n.t)}</span>` +
+    `<span class="nt-txt"><span class="nt-shot">${esc(n.shot)}</span> ${esc(n.text)}</span>` +
+    `<span class="nt-x" data-k="${k}">✕</span></div>`).join("");
+  const cnt = document.getElementById("nt-count"); if (cnt) cnt.textContent = notes.length;
+  box.querySelectorAll(".nt-t").forEach((el) => el.onclick = () => { t = notes[+el.dataset.k].t; curIdx = -1; });
+  box.querySelectorAll(".nt-x").forEach((el) => el.onclick = () => { notes.splice(+el.dataset.k, 1); saveNotes(); renderNotes(); });
+  renderNoteMarks();
+}
+function bindNotes() {
+  loadNotes(); renderNotes();
+  const inp = document.getElementById("nt-input"), add = document.getElementById("nt-add");
+  const exp = document.getElementById("nt-export"), clr = document.getElementById("nt-clear");
+  const commit = () => { addNote(inp.value); inp.value = ""; inp.focus(); };
+  if (add) add.onclick = commit;
+  if (inp) inp.addEventListener("keydown", (e) => { if (e.code === "Enter") { e.preventDefault(); commit(); } });
+  if (exp) exp.onclick = () => {
+    const txt = notes.map((n) => fmt(n.t) + " · " + n.shot + " — " + n.text).join("\n");
+    if (navigator.clipboard) navigator.clipboard.writeText(txt); console.log(txt);
+    exp.textContent = "✓ скопировано"; setTimeout(() => exp.textContent = "⧉ экспорт", 1300);
+  };
+  if (clr) clr.onclick = () => { if (notes.length && confirm("Удалить все замечания?")) { notes = []; saveNotes(); renderNotes(); } };
+}
+
 // ----------------------------------------------------------------- boot
 function boot() {
-  resize(); buildTicks(); bindControls();
+  resize(); buildTicks(); buildTimeMarks(); bindControls(); bindNotes();
   const s0 = SCN.shots[0]; setFraming(s0);
   camera.position.copy(camGoalPos); camTarget.copy(camGoalLook); camera.lookAt(camTarget);
   buildObjects();                                   // боксы-заглушки показываются сразу
