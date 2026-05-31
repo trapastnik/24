@@ -9,46 +9,97 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { deflateSync } from "node:zlib";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "assets", "models");
 mkdirSync(OUT, { recursive: true });
 
-// ----------------------------------------------------------------- палитра
-// sRGB hex + PBR-параметры. baseColorFactor в glTF линейный — конвертируем.
+// ----------------------------------------------------------------- палитра / материалы
+// Плоские материалы — sRGB hex + PBR. Текстурные фасады (tex:true) — tint множит
+// процедурную PBR-текстуру (base/normal/roughness/emissive-окна). baseColorFactor линейный.
 const MAT = {
-  paper:    { hex: 0xEDE6CF, metallic: 0.0, roughness: 0.85 },  // стены/камень
-  stone:    { hex: 0xD8CBA8, metallic: 0.0, roughness: 0.8 },   // тёплый камень
+  paper:    { hex: 0xEDE6CF, metallic: 0.0, roughness: 0.85 },  // карнизы/колонны/детали
+  stone:    { hex: 0xD8CBA8, metallic: 0.0, roughness: 0.8 },   // камень-детали
   brass:    { hex: 0xCBA85C, metallic: 0.9, roughness: 0.35 },  // золото: шпили, купола
   red:      { hex: 0xA02128, metallic: 0.0, roughness: 0.55 },  // акценты, ватерлиния
   graphite: { hex: 0x3C474F, metallic: 0.15, roughness: 0.7 },  // кровли, корпус
   dark:     { hex: 0x222A30, metallic: 0.2, roughness: 0.6 },   // корпус корабля
   steel:    { hex: 0x707A82, metallic: 0.4, roughness: 0.5 },   // палуба, надстройки
+  // текстурированные фасады (окна + рельеф + ночное свечение):
+  facadePale:  { tint: 0xF0E9D6, metallic: 0.0, roughness: 1.0, tex: true },  // бело-палевый (Зимний, Смольный)
+  facadeStone: { tint: 0xDCCFAD, metallic: 0.0, roughness: 1.0, tex: true },  // тёплый камень (дворцы)
+  facadeRed:   { tint: 0xC08A78, metallic: 0.0, roughness: 1.0, tex: true },  // охра/терракота
 };
 const srgbToLinear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 function linearRGBA(hex) {
   return [srgbToLinear(((hex >> 16) & 255) / 255), srgbToLinear(((hex >> 8) & 255) / 255), srgbToLinear((hex & 255) / 255), 1];
 }
 
+// ----------------------------------------------------------------- процедурные PBR-текстуры фасада
+// Тайл-ячейка с одним окном (бесшовная по краям-стене). 4 карты: base / normal / mr / emissive.
+function crc32(buf) { let c = 0xFFFFFFFF; for (let i = 0; i < buf.length; i++) { c ^= buf[i]; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1)); } return (c ^ 0xFFFFFFFF) >>> 0; }
+function pngChunk(type, data) { const len = Buffer.alloc(4); len.writeUInt32BE(data.length, 0); const body = Buffer.concat([Buffer.from(type, "ascii"), data]); const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body), 0); return Buffer.concat([len, body, crc]); }
+function encodePNG(w, h, rgba) {  // RGBA8 → PNG (color type 6, фильтр 0)
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6;
+  const stride = w * 4, raw = Buffer.alloc(h * (stride + 1));
+  for (let y = 0; y < h; y++) { raw[y * (stride + 1)] = 0; for (let x = 0; x < stride; x++) raw[y * (stride + 1) + 1 + x] = rgba[y * stride + x]; }
+  return Buffer.concat([sig, pngChunk("IHDR", ihdr), pngChunk("IDAT", deflateSync(raw, { level: 9 })), pngChunk("IEND", Buffer.alloc(0))]);
+}
+function facadeTextures(S = 128) {
+  const base = new Uint8Array(S * S * 4), emit = new Uint8Array(S * S * 4), mr = new Uint8Array(S * S * 4), norm = new Uint8Array(S * S * 4);
+  const height = new Float32Array(S * S);
+  const wx0 = (S * 0.30) | 0, wx1 = (S * 0.70) | 0, wy0 = (S * 0.16) | 0, wy1 = (S * 0.84) | 0;
+  const fr = Math.max(2, (S * 0.028) | 0);                       // рамка окна
+  const wall = [206, 200, 187], frame = [54, 50, 45], glass = [38, 47, 60], sill = [150, 144, 130];
+  const set = (a, i, r, g, b) => { a[i] = r; a[i + 1] = g; a[i + 2] = b; a[i + 3] = 255; };
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = (y * S + x) * 4;
+    const inW = x >= wx0 && x < wx1 && y >= wy0 && y < wy1;
+    const onFr = inW && (x < wx0 + fr || x >= wx1 - fr || y < wy0 + fr || y >= wy1 - fr);
+    const mull = inW && (Math.abs(x - (wx0 + wx1) / 2) < 1.2 || Math.abs(y - (wy0 + wy1) / 2) < 1.2);
+    const onSill = x >= wx0 - fr && x < wx1 + fr && y >= wy1 && y < wy1 + fr;
+    let col = wall, h = 0.55, rough = 240, metal = 0, em = [0, 0, 0];
+    if (onSill) { col = sill; h = 0.9; rough = 215; }
+    else if (onFr || mull) { col = frame; h = 0.72; rough = 170; }
+    else if (inW) { col = glass; h = 0.18; rough = 40; metal = 12; em = [255, 178, 96]; }     // стекло: глянец + тёплое свечение
+    else { const n = ((x * 5 + y * 11) % 13) - 6; col = [wall[0] + n, wall[1] + n, wall[2] + n]; if (y % ((S / 3) | 0) === 0) { col = [wall[0] - 16, wall[1] - 16, wall[2] - 16]; h = 0.48; } } // штукатурка + межэтажные тяги
+    set(base, i, col[0], col[1], col[2]); set(emit, i, em[0], em[1], em[2]); set(mr, i, 255, rough, metal);
+    height[y * S + x] = h;
+  }
+  const hAt = (x, y) => height[((y % S) + S) % S * S + (((x % S) + S) % S)];
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const i = (y * S + x) * 4, st = 2.4;
+    let nx = -(hAt(x + 1, y) - hAt(x - 1, y)) * st, ny = (hAt(x, y + 1) - hAt(x, y - 1)) * st, nz = 1;
+    const L = Math.hypot(nx, ny, nz);
+    set(norm, i, ((nx / L * 0.5 + 0.5) * 255) | 0, ((ny / L * 0.5 + 0.5) * 255) | 0, ((nz / L * 0.5 + 0.5) * 255) | 0);
+  }
+  return { base: encodePNG(S, S, base), norm: encodePNG(S, S, norm), mr: encodePNG(S, S, mr), emit: encodePNG(S, S, emit) };
+}
+let _facadeTex = null;
+const facadeTex = () => _facadeTex || (_facadeTex = facadeTextures(128));
+const TILE = 2.3;   // мировых единиц на повтор фасадной ячейки (≈ шаг окон)
+
 // ----------------------------------------------------------------- примитивы
 // каждый возвращает { pos:[x,y,z...], nrm:[...], idx:[...] } в локальных координатах
 function box(w, h, d) {
-  const x = w / 2, y = h / 2, z = d / 2, pos = [], nrm = [], idx = [];
-  // 6 граней с плоскими нормалями
+  const x = w / 2, y = h / 2, z = d / 2, T = TILE, pos = [], nrm = [], idx = [], uv = [];
+  // 6 граней с плоскими нормалями + планарная UV (масштаб TILE, чтобы окна повторялись)
   const faces = [
-    { n: [0, 0, 1],  v: [[-x, -y, z], [x, -y, z], [x, y, z], [-x, y, z]] },     // +Z
-    { n: [0, 0, -1], v: [[x, -y, -z], [-x, -y, -z], [-x, y, -z], [x, y, -z]] }, // -Z
-    { n: [1, 0, 0],  v: [[x, -y, z], [x, -y, -z], [x, y, -z], [x, y, z]] },     // +X
-    { n: [-1, 0, 0], v: [[-x, -y, -z], [-x, -y, z], [-x, y, z], [-x, y, -z]] }, // -X
-    { n: [0, 1, 0],  v: [[-x, y, z], [x, y, z], [x, y, -z], [-x, y, -z]] },     // +Y
-    { n: [0, -1, 0], v: [[-x, -y, -z], [x, -y, -z], [x, -y, z], [-x, -y, z]] }, // -Y
+    { n: [0, 0, 1],  v: [[-x, -y, z], [x, -y, z], [x, y, z], [-x, y, z]],     uv: [[-x/T, -y/T], [x/T, -y/T], [x/T, y/T], [-x/T, y/T]] }, // +Z
+    { n: [0, 0, -1], v: [[x, -y, -z], [-x, -y, -z], [-x, y, -z], [x, y, -z]], uv: [[-x/T, -y/T], [x/T, -y/T], [x/T, y/T], [-x/T, y/T]] }, // -Z
+    { n: [1, 0, 0],  v: [[x, -y, z], [x, -y, -z], [x, y, -z], [x, y, z]],     uv: [[-z/T, -y/T], [z/T, -y/T], [z/T, y/T], [-z/T, y/T]] }, // +X
+    { n: [-1, 0, 0], v: [[-x, -y, -z], [-x, -y, z], [-x, y, z], [-x, y, -z]], uv: [[-z/T, -y/T], [z/T, -y/T], [z/T, y/T], [-z/T, y/T]] }, // -X
+    { n: [0, 1, 0],  v: [[-x, y, z], [x, y, z], [x, y, -z], [-x, y, -z]],     uv: [[-x/T, -z/T], [x/T, -z/T], [x/T, z/T], [-x/T, z/T]] }, // +Y
+    { n: [0, -1, 0], v: [[-x, -y, -z], [x, -y, -z], [x, -y, z], [-x, -y, z]], uv: [[-x/T, -z/T], [x/T, -z/T], [x/T, z/T], [-x/T, z/T]] }, // -Y
   ];
   for (const f of faces) {
     const b = pos.length / 3;
-    for (const v of f.v) { pos.push(...v); nrm.push(...f.n); }
+    for (let k = 0; k < 4; k++) { pos.push(...f.v[k]); nrm.push(...f.n); uv.push(...f.uv[k]); }
     idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
   }
-  return { pos, nrm, idx };
+  return { pos, nrm, idx, uv };
 }
 
 // усечённый конус / цилиндр вертикально (база y=0 .. верх y=h)
@@ -126,8 +177,8 @@ class Model {
     const [sx, sy, sz] = Array.isArray(scale) ? scale : [scale, scale, scale];
     const [tx, ty, tz] = pos, ca = Math.cos(ry), sa = Math.sin(ry);
     const key = mat;
-    if (!this.parts.has(key)) this.parts.set(key, { pos: [], nrm: [], idx: [], mat });
-    const part = this.parts.get(key), off = part.pos.length / 3;
+    if (!this.parts.has(key)) this.parts.set(key, { pos: [], nrm: [], idx: [], uv: [], mat });
+    const part = this.parts.get(key), off = part.pos.length / 3, nV = geo.pos.length / 3;
     for (let i = 0; i < geo.pos.length; i += 3) {
       let x = geo.pos[i] * sx, y = geo.pos[i + 1] * sy, z = geo.pos[i + 2] * sz;
       const rx = x * ca + z * sa, rz = -x * sa + z * ca;
@@ -136,6 +187,9 @@ class Model {
       const rnx = nx * ca + nz * sa, rnz = -nx * sa + nz * ca, L = Math.hypot(rnx, ny, rnz) || 1;
       part.nrm.push(rnx / L, ny / L, rnz / L);
     }
+    // UV: без трансформации; для примитивов без uv — нули (текстура к ним всё равно не привязана)
+    if (geo.uv) for (const u of geo.uv) part.uv.push(u);
+    else for (let i = 0; i < nV * 2; i++) part.uv.push(0);
     for (const id of geo.idx) part.idx.push(id + off);
     return this;
   }
@@ -151,17 +205,17 @@ function smolny() {
   const m = new Model("smolny");
   const L = 24, H = 5, D = 6, base = 0.8;
   m.add(box(L, base, D + 0.4), { mat: "graphite", pos: [0, base / 2, 0] });        // цоколь
-  m.add(box(L, H, D), { mat: "stone", pos: [0, base + H / 2, 0] });                 // главный корпус (3 этажа)
+  m.add(box(L, H, D), { mat: "facadePale", pos: [0, base + H / 2, 0] });            // главный корпус (3 этажа, окна)
   m.add(box(L + 0.5, 0.6, D + 0.4), { mat: "paper", pos: [0, base + H, 0] });       // венчающий карниз
   m.add(box(L, 0.5, D), { mat: "graphite", pos: [0, base + H + 0.35, 0] });         // кровля
   // торцевые ризалиты
   for (const sx of [-1, 1]) {
-    m.add(box(2.6, H + 0.4, D + 0.5), { mat: "stone", pos: [sx * 10.7, base + (H + 0.4) / 2, 0] });
+    m.add(box(2.6, H + 0.4, D + 0.5), { mat: "facadePale", pos: [sx * 10.7, base + (H + 0.4) / 2, 0] });
     m.add(box(2.9, 0.5, D + 0.7), { mat: "graphite", pos: [sx * 10.7, base + H + 0.55, 0] });
   }
   // центральный портик (выступает вперёд +Z)
   const fz = D / 2;
-  m.add(box(9, H + 0.6, 1.2), { mat: "stone", pos: [0, base + (H + 0.6) / 2, fz - 0.2] }); // ризалит за колоннами
+  m.add(box(9, H + 0.6, 1.2), { mat: "facadePale", pos: [0, base + (H + 0.6) / 2, fz - 0.2] }); // ризалит за колоннами
   for (let i = -3.5; i <= 3.5; i += 1)                                              // 8 колонн
     m.add(cyl(0.32, 0.34, H + 0.2, 8), { mat: "paper", pos: [i, base, fz + 1.4] });
   m.add(box(8.6, 0.9, 1.6), { mat: "paper", pos: [0, base + H + 0.3, fz + 1.4] });  // антаблемент
@@ -173,27 +227,27 @@ function smolny() {
 function winter() {
   // Зимний дворец: длинный низкий барочный блок, чуть выше центр, парапет + статуи
   const m = new Model("winter");
-  m.add(box(20, 5, 6), { mat: "paper", pos: [0, 2.5, 0] });             // главный корпус
-  m.add(box(7, 6.2, 6.4), { mat: "paper", pos: [0, 3.1, 0] });          // центральный ризалит
+  m.add(box(20, 5, 6), { mat: "facadePale", pos: [0, 2.5, 0] });        // главный корпус (окна)
+  m.add(box(7, 6.2, 6.4), { mat: "facadePale", pos: [0, 3.1, 0] });     // центральный ризалит
   m.add(box(20.6, 0.7, 6.6), { mat: "brass", pos: [0, 5.2, 0] });       // карниз
   m.add(box(7.4, 0.7, 6.8), { mat: "brass", pos: [0, 6.6, 0] });        // карниз центра
   m.add(box(20.6, 0.5, 6.6), { mat: "graphite", pos: [0, 5.7, 0] });    // кровля-парапет
   // ряд кровельных статуй (намёк)
   for (let i = -9; i <= 9; i += 1.8) m.add(box(0.3, 0.9, 0.3), { mat: "stone", pos: [i, 6.4, 2.9] });
   // фланговые акценты
-  m.add(box(2, 5.6, 6.2), { mat: "paper", pos: [-9.2, 2.8, 0] });
-  m.add(box(2, 5.6, 6.2), { mat: "paper", pos: [9.2, 2.8, 0] });
+  m.add(box(2, 5.6, 6.2), { mat: "facadePale", pos: [-9.2, 2.8, 0] });
+  m.add(box(2, 5.6, 6.2), { mat: "facadePale", pos: [9.2, 2.8, 0] });
   return m;
 }
 
 function fortress() {
   // Петропавловский собор — узнаваемый золотой шпиль (визитка крепости)
   const m = new Model("fortress");
-  m.add(box(5, 3, 8), { mat: "paper", pos: [0, 1.5, 2] });              // тело собора
+  m.add(box(5, 3, 8), { mat: "facadeStone", pos: [0, 1.5, 2] });        // тело собора (окна)
   m.add(box(5.4, 0.6, 8.4), { mat: "graphite", pos: [0, 3.1, 2] });     // кровля
   // ступенчатая колокольня
-  m.add(box(3.4, 4, 3.4), { mat: "paper", pos: [0, 2, -2.2] });
-  m.add(box(2.8, 3, 2.8), { mat: "paper", pos: [0, 5.5, -2.2] });
+  m.add(box(3.4, 4, 3.4), { mat: "facadeStone", pos: [0, 2, -2.2] });
+  m.add(box(2.8, 3, 2.8), { mat: "facadeStone", pos: [0, 5.5, -2.2] });
   m.add(box(2.2, 2.5, 2.2), { mat: "stone", pos: [0, 8.2, -2.2] });
   m.add(cyl(1.2, 1.6, 2, 8), { mat: "brass", pos: [0, 9.4, -2.2] });    // золотой барабан
   // шпиль: очень высокий тонкий конус + игла + крест-намёк
@@ -206,10 +260,10 @@ function fortress() {
 function mariinsky() {
   // Мариинский дворец: классицистический блок + центральный портик с колоннами + аттик
   const m = new Model("mariinsky");
-  m.add(box(14, 5.5, 6), { mat: "stone", pos: [0, 2.75, 0] });
+  m.add(box(14, 5.5, 6), { mat: "facadeStone", pos: [0, 2.75, 0] });    // корпус (окна)
   m.add(box(14.4, 0.6, 6.4), { mat: "paper", pos: [0, 5.6, 0] });       // карниз
   m.add(box(14, 0.5, 6.2), { mat: "graphite", pos: [0, 6.1, 0] });      // кровля
-  m.add(box(6.5, 4.6, 1.2), { mat: "stone", pos: [0, 2.3, 3.2] });      // ризалит-портик
+  m.add(box(6.5, 4.6, 1.2), { mat: "facadeStone", pos: [0, 2.3, 3.2] }); // ризалит-портик
   // колонны портика
   for (let i = -2.4; i <= 2.4; i += 1.2) m.add(cyl(0.32, 0.32, 4, 8), { mat: "paper", pos: [i, 0, 3.9] });
   m.add(box(6.8, 1, 1.6), { mat: "paper", pos: [0, 4.6, 3.4] });        // антаблемент
@@ -220,11 +274,11 @@ function mariinsky() {
 function tauride() {
   // Таврический дворец: центральный купол + 6-колонный портик + низкие крылья
   const m = new Model("tauride");
-  m.add(box(8, 5, 6), { mat: "stone", pos: [0, 2.5, 0] });              // центр
-  m.add(box(6, 4, 5), { mat: "stone", pos: [-9, 2, 0] });               // левое крыло
-  m.add(box(6, 4, 5), { mat: "stone", pos: [9, 2, 0] });                // правое крыло
-  m.add(box(4, 4, 4.5), { mat: "stone", pos: [-5.5, 2, 0] });           // галерея
-  m.add(box(4, 4, 4.5), { mat: "stone", pos: [5.5, 2, 0] });
+  m.add(box(8, 5, 6), { mat: "facadeStone", pos: [0, 2.5, 0] });        // центр (окна)
+  m.add(box(6, 4, 5), { mat: "facadeStone", pos: [-9, 2, 0] });         // левое крыло
+  m.add(box(6, 4, 5), { mat: "facadeStone", pos: [9, 2, 0] });          // правое крыло
+  m.add(box(4, 4, 4.5), { mat: "facadeStone", pos: [-5.5, 2, 0] });     // галерея
+  m.add(box(4, 4, 4.5), { mat: "facadeStone", pos: [5.5, 2, 0] });
   m.add(box(8.4, 0.6, 6.4), { mat: "paper", pos: [0, 5.3, 0] });        // карниз
   // портик
   for (let i = -2.5; i <= 2.5; i += 1) m.add(cyl(0.3, 0.3, 4.2, 8), { mat: "paper", pos: [i, 0, 3.3] });
@@ -266,18 +320,30 @@ function aurora() {
 // ----------------------------------------------------------------- запись GLB
 function writeGLB(model) {
   const accessors = [], bufferViews = [], materials = [], primitives = [];
+  const images = [], textures = [], samplers = [];
   const chunks = []; let byteLen = 0;
   const matIndex = new Map();
   const pushView = (typed, target) => {
     while (byteLen % 4 !== 0) { chunks.push(Buffer.from([0])); byteLen += 1; }
     const buf = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength);
-    const view = { buffer: 0, byteOffset: byteLen, byteLength: buf.length, target };
+    const view = { buffer: 0, byteOffset: byteLen, byteLength: buf.length };
+    if (target !== undefined) view.target = target;
     chunks.push(buf); byteLen += buf.length; bufferViews.push(view); return bufferViews.length - 1;
   };
+  // фасадные PBR-текстуры встраиваем, только если модель их использует
+  const usesTex = [...model.parts.values()].some((p) => MAT[p.mat] && MAT[p.mat].tex);
+  let TEX = null;
+  if (usesTex) {
+    const f = facadeTex();
+    samplers.push({ wrapS: 10497, wrapT: 10497, magFilter: 9729, minFilter: 9987 }); // REPEAT + трилинейная
+    const img = (png) => { const bv = pushView(png, undefined); images.push({ bufferView: bv, mimeType: "image/png" }); textures.push({ source: images.length - 1, sampler: 0 }); return textures.length - 1; };
+    TEX = { base: img(f.base), norm: img(f.norm), mr: img(f.mr), emit: img(f.emit) };
+  }
   for (const part of model.parts.values()) {
     const nVerts = part.pos.length / 3;
     const positions = Float32Array.from(part.pos), normals = Float32Array.from(part.nrm);
     const indices = Uint16Array.from(part.idx);
+    const def = MAT[part.mat], isTex = !!(def && def.tex);
     // min/max для POSITION (требование glTF)
     const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
     for (let i = 0; i < positions.length; i += 3) for (let k = 0; k < 3; k++) {
@@ -285,20 +351,35 @@ function writeGLB(model) {
     }
     const posView = pushView(positions, 34962);
     accessors.push({ bufferView: posView, componentType: 5126, count: nVerts, type: "VEC3", min, max });
-    const posAcc = accessors.length - 1;
+    const attrs = { POSITION: accessors.length - 1 };
     const nrmView = pushView(normals, 34962);
     accessors.push({ bufferView: nrmView, componentType: 5126, count: nVerts, type: "VEC3" });
-    const nrmAcc = accessors.length - 1;
+    attrs.NORMAL = accessors.length - 1;
+    if (isTex) {                                            // UV только для текстурных материалов
+      const uvView = pushView(Float32Array.from(part.uv), 34962);
+      accessors.push({ bufferView: uvView, componentType: 5126, count: nVerts, type: "VEC2" });
+      attrs.TEXCOORD_0 = accessors.length - 1;
+    }
     const idxView = pushView(indices, 34963);
     accessors.push({ bufferView: idxView, componentType: 5123, count: indices.length, type: "SCALAR" });
     const idxAcc = accessors.length - 1;
     // материал (по имени — переиспользуем)
     if (!matIndex.has(part.mat)) {
-      const def = MAT[part.mat];
-      materials.push({ name: part.mat, doubleSided: true, pbrMetallicRoughness: { baseColorFactor: linearRGBA(def.hex), metallicFactor: def.metallic, roughnessFactor: def.roughness } });
-      matIndex.set(part.mat, materials.length - 1);
+      let mat;
+      if (isTex) {
+        mat = {
+          name: part.mat, doubleSided: true,
+          pbrMetallicRoughness: { baseColorFactor: linearRGBA(def.tint), metallicFactor: 1, roughnessFactor: 1,
+            baseColorTexture: { index: TEX.base }, metallicRoughnessTexture: { index: TEX.mr } },
+          normalTexture: { index: TEX.norm, scale: 1.0 },
+          emissiveTexture: { index: TEX.emit }, emissiveFactor: [1, 1, 1],
+        };
+      } else {
+        mat = { name: part.mat, doubleSided: true, pbrMetallicRoughness: { baseColorFactor: linearRGBA(def.hex), metallicFactor: def.metallic, roughnessFactor: def.roughness } };
+      }
+      materials.push(mat); matIndex.set(part.mat, materials.length - 1);
     }
-    primitives.push({ attributes: { POSITION: posAcc, NORMAL: nrmAcc }, indices: idxAcc, material: matIndex.get(part.mat) });
+    primitives.push({ attributes: attrs, indices: idxAcc, material: matIndex.get(part.mat) });
   }
   const gltf = {
     asset: { version: "2.0", generator: "MTK24 build_models.mjs" },
@@ -307,6 +388,7 @@ function writeGLB(model) {
     meshes: [{ name: model.name, primitives }],
     materials, accessors, bufferViews, buffers: [{ byteLength: byteLen }],
   };
+  if (usesTex) { gltf.images = images; gltf.textures = textures; gltf.samplers = samplers; }
   // упаковка GLB
   const bin = Buffer.concat(chunks);
   let json = Buffer.from(JSON.stringify(gltf), "utf8");
