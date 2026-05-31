@@ -58,6 +58,13 @@
         <div class="tech-title" id="tech-title"></div>
         <dl class="tech-meta" id="tech-meta"></dl>
       </div>
+
+      <!-- 3D-вьюер модели текущего ориентира (встраиваемый _qa.html, смена модели через postMessage) -->
+      <div class="tech-viewer">
+        <span class="tech-label">3D-модель кадра · <b id="tv-cap"></b></span>
+        <iframe id="model-view" title="3D-модель" src="./assets/models/_qa.html?key=smolny&night=1&bg=0x10151a"></iframe>
+      </div>
+
       <div class="tech-vo" id="tech-vo">
         <span class="tech-label">ГЗК · полный дикторский текст</span>
         <p id="vo-full"></p>
@@ -78,6 +85,7 @@
           <b class="ctrl-val" id="cx-shadowp-v">45%</b><input type="range" id="cx-shadowp" min="0" max="100" step="1"></div>
         <div class="ctrl-row"><label for="cx-citycut">Вырез у моделей</label>
           <b class="ctrl-val" id="cx-citycut-v">280 м</b><input type="range" id="cx-citycut" min="0" max="400" step="10" autocomplete="off"></div>
+        <label class="ctrl-switch"><input type="checkbox" id="cx-pads" autocomplete="off"><span>Круги под моделями</span></label>
       </div>
     </aside>
 

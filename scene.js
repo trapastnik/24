@@ -238,7 +238,7 @@ const BASE = { sunC: C(0xfff1d6), sunI: 1.1, ambC: C(0xffffff), ambI: 0.6, mapC:
 const BASE_POS = new THREE.Vector3(-60, 120, 40);
 const sunGoalPos = new THREE.Vector3().copy(BASE_POS);
 // настройки из техзоны (живая правка слайдерами/тумблерами)
-const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, nightLights: true, cityCut: 1.4 };
+const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, nightLights: true, cityCut: 1.4, pads: false };
 
 function updateLighting(sm, dt, snap) {
   const { altDeg, az } = sunPos(sm), g = gradeAt(altDeg);
@@ -390,6 +390,7 @@ function addForcePad(w, size) {
     opacity: 0, depthWrite: false });
   const pad = new THREE.Mesh(new THREE.PlaneGeometry(r, r), mat);
   pad.rotation.x = -Math.PI / 2; pad.position.set(w.x, 0.1, w.z); pad.renderOrder = 1;
+  pad.visible = FX_SET.pads;                          // тумблер «Круги под моделями» (cx-pads)
   objGroup.add(pad); return pad;
 }
 // индекс всех объектов сценария: какая сила, каким кадром (и при каком lp) захвачен
@@ -468,7 +469,7 @@ function updateObjects(lp, time) {
           if (red) { m.emissive.setHex(COL.redLight); m.emissiveIntensity = act ? 0.5 : 0.22; }
           else { m.emissive.setHex(c.userData.emHex); m.emissiveIntensity = c.userData.emInt; }
         }});
-      if (o.pad) { const pm = o.pad.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.graphite);
+      if (o.pad) { o.pad.visible = FX_SET.pads; const pm = o.pad.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.graphite);
         pm.color.setHex(col);
         const base = act ? (red ? 0.20 : force === "vrk" ? 0.18 : 0.10) : (red ? 0.08 : 0.035);
         pm.opacity = pulseE != null ? 0.09 + 0.26 * pulseE : base;
@@ -716,6 +717,7 @@ const hud = {
   fill: el("trackFill"), clock: el("clock"), track: el("track"), play: el("btnPlay"),
   evTime: el("ev-time"), evDate: el("ev-date"), voFull: el("vo-full"), flash: el("fx-flash"),
   techScene: el("tech-scene"), techTitle: el("tech-title"), techMeta: el("tech-meta"),
+  mdlView: el("model-view"), tvCap: el("tv-cap"),
 };
 // номер кадра как в плане (Вступление / Кадр N / Финал)
 function sceneLabel(i) {
@@ -790,6 +792,15 @@ function applyShot(i) {
   ticks.forEach((tk, k) => { tk.classList.toggle("active", k === i); tk.classList.toggle("done", k < i); });
   setFraming(s);
   applyShotToObjects(i); buildRoutes(s); buildFx(s);
+  // 3D-вьюер в техзоне: показать модель ориентира текущего кадра (iframe _qa.html через postMessage)
+  if (hud.mdlView && hud.mdlView.contentWindow) {
+    const keys = (s.focus || []).concat((s.points || []).map((p) => p.key));
+    const mk = keys.find((k) => MODEL_CFG[k]);
+    if (mk) {
+      hud.mdlView.contentWindow.postMessage({ mtk24Model: mk }, "*");
+      if (hud.tvCap) hud.tvCap.textContent = (loc(mk) && loc(mk).name) || mk;
+    }
+  }
 }
 
 // ----------------------------------------------------------------- clock / loop
@@ -965,6 +976,8 @@ function bindControls() {
     citycut.addEventListener("input", () => { FX_SET.cityCut = +citycut.value / 100; citycutV.textContent = Math.round(FX_SET.cityCut * 200) + " м"; });
     citycut.addEventListener("change", () => { rebuildCityMassing(); });   // перестроить массинг на отпускании ползунка
   }
+  const pads = $("cx-pads");
+  if (pads) { pads.checked = FX_SET.pads; pads.addEventListener("change", () => { FX_SET.pads = pads.checked; }); }
   const postCx = $("cx-post");
   if (postCx) postCx.addEventListener("change", () => { post.enabled = postCx.checked; syncPostUI(); });
   syncPostUI();

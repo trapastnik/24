@@ -121,6 +121,13 @@ html, body {
 }
 .ctrl-val { color: var(--brass); font-weight: 600; justify-self: end; min-width: 3.2em; text-align: right; }
 
+/* 3D-вьюер модели текущего ориентира в техзоне (встраиваемый _qa.html) */
+.tech-viewer { flex-shrink: 0; margin-top: 0.7em; padding-top: 0.7em; border-top: 1px solid #1c2329;
+  display: flex; flex-direction: column; gap: 0.4em; }
+.tech-viewer .tech-label b { color: var(--brass); font-weight: 600; }
+#model-view { width: 100%; height: clamp(150px, 22vh, 230px); border: 0; border-radius: 5px;
+  background: #10151a; display: block; }
+
 /* большие часы + календарь (время события) */
 .clockbox {
   position: absolute; z-index: 6; top: clamp(16px,2.6vh,40px); left: 50%; transform: translateX(-50%);
