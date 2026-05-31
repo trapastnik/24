@@ -1,0 +1,81 @@
+<!doctype html>
+<!-- Встраиваемый вьюер модели (сессия моделей). Орбита/свет/тени/окружение.
+     Использование scene-сессией: <iframe src="./assets/models/_qa.html?key=smolny"></iframe>
+       ?key=<ключ из data/models.js>  ИЛИ  ?m=<путь к .glb относительно этой папки>
+       ?bg=transparent | <hex>   ?rotate=0|1   ?night=0|1
+     Смена модели на лету: iframe.contentWindow.postMessage({mtk24Model:"winter"}, "*") -->
+<html lang="ru"><head><meta charset="utf-8"><title>MTK24 model viewer</title>
+<style>html,body{margin:0;height:100%;background:#0c1012;overflow:hidden}
+#hud{position:fixed;left:10px;bottom:8px;font:12px/1.4 monospace;color:#b9ac86;z-index:2;opacity:.75;pointer-events:none}</style>
+<script src="../../data/models.js"></script>
+<script type="importmap">{ "imports": { "three": "../../lib/three/three.module.min.js", "three/addons/": "../../lib/three/addons/" } }</script>
+</head><body>
+<div id="hud">…</div>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const P = new URLSearchParams(location.search);
+const CFG = (window.MTK24_MODELS && window.MTK24_MODELS.cfg) || {};
+const bg = P.get("bg") || "0x10151a";
+const night = P.get("night") === "1";
+const fileFor = (key) => (CFG[key] && CFG[key].file) || null;
+function resolve() {
+  if (P.get("m")) return P.get("m");
+  const k = P.get("key"); return (k && fileFor(k)) ? fileFor(k) : "smolny.glb";
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: bg === "transparent" });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+if (bg !== "transparent") scene.background = new THREE.Color(Number(bg));
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = night ? 0.2 : 0.65;
+scene.add(new THREE.AmbientLight(0xffffff, night ? 0.12 : 0.45));
+const key = new THREE.DirectionalLight(night ? 0x9fb4e0 : 0xfff1d6, night ? 0.5 : 2.1);
+key.position.set(-4, 6, 5); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); Object.assign(key.shadow.camera, { near: 0.1, far: 80, left: -16, right: 16, top: 16, bottom: -16 });
+scene.add(key);
+scene.add(Object.assign(new THREE.DirectionalLight(0x9fb4d8, 0.5), { position: new THREE.Vector3(6, 3, -7) }));
+
+const ground = new THREE.Mesh(new THREE.CircleGeometry(80, 64), new THREE.MeshStandardMaterial({ color: 0x161b20, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.05, 1000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.autoRotate = P.get("rotate") !== "0"; controls.autoRotateSpeed = 0.9; controls.enableDamping = true;
+const hud = document.getElementById("hud");
+
+let current = null;
+const loader = new GLTFLoader();
+function show(file) {
+  loader.load("./" + file, (g) => {
+    if (current) scene.remove(current);
+    const o = g.scene; o.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+    const bb = new THREE.Box3().setFromObject(o), sz = bb.getSize(new THREE.Vector3()), c = bb.getCenter(new THREE.Vector3());
+    o.position.set(-c.x, -bb.min.y, -c.z);
+    const s = 6 / Math.max(sz.x, sz.y, sz.z, 1e-3); o.scale.setScalar(s);
+    scene.add(o); current = o;
+    const h = sz.y * s; const tgt = new THREE.Vector3(0, h * 0.5, 0);
+    controls.target.copy(tgt); camera.position.set(6, h * 0.6 + 1.5, 9); camera.lookAt(tgt);
+    let tris = 0; o.traverse(m => { if (m.isMesh && m.geometry.index) tris += m.geometry.index.count / 3; });
+    hud.textContent = file + "  ·  " + tris.toLocaleString() + " трис";
+    window.__loaded = true;
+  }, undefined, e => { hud.textContent = "ОШИБКА: " + e.message; window.__err = e.message; });
+}
+show(resolve());
+// смена модели от родителя (scene.js по клику на маркер)
+addEventListener("message", (e) => { const d = e.data || {}; if (d.mtk24Model) { const f = fileFor(d.mtk24Model) || (/\.glb$/i.test(d.mtk24Model) ? d.mtk24Model : null); if (f) show(f); } });
+
+addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+</script></body></html>
