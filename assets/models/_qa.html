@@ -45,7 +45,7 @@ const key = new THREE.DirectionalLight(night ? 0x9fb4e0 : 0xfff1d6, night ? 0.5 
 key.position.set(-4, 6, 5); key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048); Object.assign(key.shadow.camera, { near: 0.1, far: 80, left: -16, right: 16, top: 16, bottom: -16 });
 scene.add(key);
-scene.add(Object.assign(new THREE.DirectionalLight(0x9fb4d8, 0.5), { position: new THREE.Vector3(6, 3, -7) }));
+const rim = new THREE.DirectionalLight(0x9fb4d8, 0.5); rim.position.set(6, 3, -7); scene.add(rim);
 
 const ground = new THREE.Mesh(new THREE.CircleGeometry(80, 64), new THREE.MeshStandardMaterial({ color: 0x161b20, roughness: 1 }));
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
