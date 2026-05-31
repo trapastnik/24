@@ -432,7 +432,7 @@ function isCaptured(o, idx, lp) {
   if (idx > o.captureShot) return true;
   return idx === o.captureShot && lp >= (o.at || 0);
 }
-function setOpacity(m, op) { m.opacity = op; m.transparent = op < 1; m.depthWrite = op >= 1; }
+function setOpacity(m, op) { m.opacity = op; m.transparent = op < 1; m.depthWrite = true; }  // depthWrite всегда — приглушённый объект перекрывает тень под/за собой (не просвечивает)
 // покадрово: прозрачность/цвет/пульс по фокусу и захвату
 function updateObjects(lp, time) {
   for (const key in objects) {
