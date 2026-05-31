@@ -492,8 +492,59 @@ function testBuilding() {
   return m;
 }
 
+// ----------------------------------------------------------------- простые типовые модели (вместо кубов-плейсхолдеров)
+// Лёгкие процедурные «болванки» с процедурными окнами. Один файл — много точек
+// (size/yaw подбираются на точку в data/models.js). `node build_models.mjs extra`.
+function civic() {                       // присутственное место: министерства, банк, почта, телеграф, типография
+  const m = new Model("civic");
+  const W = 10, H = 5, D = 7, b = 0.6;
+  m.add(box(W, b, D), { mat: "graphite", pos: [0, b / 2, 0] });                 // цоколь
+  m.add(box(W, H, D), { mat: "facadeStone", pos: [0, b + H / 2, 0] });          // корпус (окна)
+  m.add(box(W + 0.4, 0.5, D + 0.4), { mat: "paper", pos: [0, b + H, 0] });      // карниз
+  m.add(box(W, 0.4, D), { mat: "graphite", pos: [0, b + H + 0.25, 0] });        // кровля
+  m.add(box(3.6, H + 0.5, 0.9), { mat: "facadeStone", pos: [0, b + (H + 0.5) / 2, D / 2] }); // центральный ризалит
+  m.add(box(2.6, H - 1, 0.3), { mat: "graphite", pos: [0, b, D / 2 + 0.5] });   // портал
+  return m;
+}
+function station() {                     // вокзал: длинный зал + угловая башня + вход
+  const m = new Model("station");
+  const W = 14, H = 4.6, D = 7, b = 0.6;
+  m.add(box(W, b, D), { mat: "graphite", pos: [0, b / 2, 0] });
+  m.add(box(W, H, D), { mat: "facadePale", pos: [0, b + H / 2, 0] });           // зал (окна)
+  m.add(box(W + 0.4, 0.5, D + 0.4), { mat: "paper", pos: [0, b + H, 0] });
+  m.add(box(W, 0.45, D), { mat: "graphite", pos: [0, b + H + 0.25, 0] });
+  const tx = -W / 2 + 1.6;
+  m.add(box(3.2, H + 3, 3.2), { mat: "facadePale", pos: [tx, b + (H + 3) / 2, 0] }); // часовая башня
+  m.add(box(3.4, 0.5, 3.4), { mat: "brass", pos: [tx, b + H + 3, 0] });
+  m.add(box(0.5, 1.6, 0.5), { mat: "brass", pos: [tx, b + H + 3.3, 0] });       // флагшток-намёк
+  m.add(box(3.5, H - 1.4, 0.3), { mat: "graphite", pos: [2, b, D / 2] });       // арочный вход (тёмный)
+  return m;
+}
+function house() {                       // жилой дом / казармы: блок + двускатная крыша
+  const m = new Model("house");
+  const W = 6, H = 5, D = 5, b = 0.5;
+  m.add(box(W, b, D), { mat: "graphite", pos: [0, b / 2, 0] });
+  m.add(box(W, H, D), { mat: "facadePale", pos: [0, b + H / 2, 0] });           // корпус (окна)
+  m.add(box(W + 0.3, 0.4, D + 0.3), { mat: "paper", pos: [0, b + H, 0] });      // карниз
+  m.add(gable(W + 0.3, 1.7, D + 0.3), { mat: "graphite", pos: [0, b + H + 0.2, 0] }); // крыша (конёк по Z)
+  return m;
+}
+function works() {                       // промздание (электростанция): корпус + высокая труба
+  const m = new Model("works");
+  const W = 8, H = 5, D = 7, b = 0.5;
+  m.add(box(W, b, D), { mat: "graphite", pos: [0, b / 2, 0] });
+  m.add(box(W, H, D), { mat: "facadeStone", pos: [0, b + H / 2, 0] });          // корпус (окна)
+  m.add(box(W + 0.3, 0.4, D + 0.3), { mat: "graphite", pos: [0, b + H, 0] });   // плоская кровля
+  m.add(cyl(0.55, 0.7, 9, 10), { mat: "red", pos: [W / 2 - 1.2, b + H, -D / 4] }); // труба
+  m.add(cyl(0.75, 0.75, 0.4, 10), { mat: "graphite", pos: [W / 2 - 1.2, b + H + 9, -D / 4] });
+  return m;
+}
+
 // ----------------------------------------------------------------- main
-const builders = process.argv[2] === "test" ? [testBuilding] : [smolny, winter, fortress, mariinsky, tauride, aurora];
+const MODE = process.argv[2];
+const builders = MODE === "test" ? [testBuilding]
+  : MODE === "extra" ? [civic, station, house, works]
+  : [smolny, winter, fortress, mariinsky, tauride, aurora];
 console.log("Генерация low-poly моделей → assets/models/\n");
 let totalTris = 0, totalKb = 0;
 for (const b of builders) {
