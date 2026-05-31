@@ -168,6 +168,7 @@ const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadow
 
 function updateLighting(sm, dt, snap) {
   const { altDeg, az } = sunPos(sm), g = gradeAt(altDeg);
+  if (window.MTK24_AUDIO) MTK24_AUDIO.setNight(Math.min(1, Math.max(0, (6 - altDeg) / 18)));   // ветер гуще ночью
   const w = FX_SET.light ? FX_SET.contrast : 0;     // 0 = базовый свет, 1 = полный день/ночь
   // позиция Солнца: высота не ниже «пола» (реальные ~17° в полдень слишком низки)
   const ap = Math.max(altDeg, FX_SET.sunFloor) * Math.PI / 180;
@@ -601,8 +602,10 @@ const FX_BUILD = {
     const ball = glowSprite(0xfff0c0, 4);
     const impact = glowSprite(COL.redLight, 5); impact.position.copy(win);
     fxFlashes.push({ lp: at + 0.68 * (1 - at), fired: false, color: "rgba(226,65,43,0.6)" });
+    let boomed = false;
     fxItems.push({ update(lp, time) {
       const fp = fpOf(lp, at);
+      if (!boomed && fp >= 0.33) { boomed = true; if (window.MTK24_AUDIO) MTK24_AUDIO.fx("shot"); }   // бум на дульной вспышке
       let o = tri(fp, 0.10, 0.12); signal.material.opacity = o; signal.scale.setScalar(4 + 6 * o);
       o = tri(fp, 0.33, 0.10); muzzle.material.opacity = 1.2 * o; muzzle.scale.setScalar(4 + 12 * o);
       const sp = seg(fp, 0.30, 0.62), sr = 2 + sp * 26;
@@ -768,6 +771,7 @@ function applyShot(i) {
   ticks.forEach((tk, k) => { tk.classList.toggle("active", k === i); tk.classList.toggle("done", k < i); });
   setFraming(s);
   applyShotToObjects(i); buildRoutes(s); buildFx(s);
+  if (window.MTK24_AUDIO) MTK24_AUDIO.shot(i, s);   // звук кадра (гул толпы/акцент по fx)
 }
 
 // ----------------------------------------------------------------- clock / loop
@@ -781,6 +785,11 @@ function frame(now) {
   if (i !== curIdx) { curIdx = i; applyShot(i); }
   const s = SCN.shots[i];
   const lp = Math.min(1, Math.max(0, (t - s.t0) / Math.max(0.001, s.t1 - s.t0)));
+
+  if (window.MTK24_AUDIO) {                          // звук: шаги Ленина / радио-телеграф по кадру (идемпотентно)
+    (s.id === "lenin" && playing) ? MTK24_AUDIO.stepsOn() : MTK24_AUDIO.stepsOff();
+    (s.id === "telegraph" && playing) ? MTK24_AUDIO.radioOn() : MTK24_AUDIO.radioOff();
+  }
 
   // камера: свободный осмотр (OrbitControls) ИЛИ покадровый наезд по сценарию
   if (FX_SET.freeCam) {
@@ -813,7 +822,7 @@ function frame(now) {
 }
 
 // ----------------------------------------------------------------- controls
-hud.play.addEventListener("click", () => { playing = !playing; hud.play.textContent = playing ? "❚❚" : "►"; });
+hud.play.addEventListener("click", () => { playing = !playing; hud.play.textContent = playing ? "❚❚" : "►"; if (window.MTK24_AUDIO) MTK24_AUDIO.setPlaying(playing); });
 hud.track.addEventListener("click", (e) => {
   const r = hud.track.getBoundingClientRect();
   t = Math.min(SCN.duration - 0.01, Math.max(0, (e.clientX - r.left) / r.width * SCN.duration));
