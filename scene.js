@@ -251,6 +251,7 @@ function updateLighting(sm, dt, snap) {
   const k = snap ? 1 : 1 - Math.pow(0.05, dt);
   sun.position.lerp(sunGoalPos, k);
   const nf = Math.min(1, Math.max(0, (6 - altDeg) / 12));   // Ф2: 0 день(+6°)…1 ночь(−6°)
+  if (window.MTK24_AUDIO) window.MTK24_AUDIO.setNight(nf);   // звук: ветер гуще ночью
   const nightDim = 1 - 0.6 * nf;                            // ночью топим базовый свет — драма от локальных источников
   sun.color.lerp(mixC(BASE.sunC, g.sunC), k); sun.intensity += (mixN(BASE.sunI, g.sunI) * nightDim - sun.intensity) * k;
   amb.color.lerp(mixC(BASE.ambC, g.ambC), k);
@@ -490,6 +491,7 @@ const headTex = glowDot(hex(COL.redLight), false);
 
 function buildRoutes(shot) {
   routesGroup.clear(); routes = [];
+  if (window.MTK24_AUDIO) window.MTK24_AUDIO.stepsOff();   // стоп шагов при смене кадра
   for (const r of (shot.routes || [])) {
     const wp = LOC.routes[r.key]; if (!wp || wp.length < 2) continue;
     const pts = wp.map(p => {
@@ -504,18 +506,21 @@ function buildRoutes(shot) {
     tube.renderOrder = 8; routesGroup.add(tube);
     const head = new THREE.Sprite(new THREE.SpriteMaterial({ map: headTex, transparent: true, depthTest: false }));
     head.scale.set(6, 6, 1); head.renderOrder = 11; routesGroup.add(head);
-    routes.push({ curve, tube, head, at: r.at ?? 0, dur: r.dur ?? 0.8, geo: tube.geometry });
+    routes.push({ key: r.key, curve, tube, head, at: r.at ?? 0, dur: r.dur ?? 0.8, geo: tube.geometry });
   }
 }
 function updateRoutes(lp) {
+  let leninWalking = false;
   for (const r of routes) {
     const p = Math.min(1, Math.max(0, (lp - r.at) / r.dur));
     r.head.visible = p > 0 && p < 1.001;
     if (p > 0) r.head.position.copy(r.curve.getPoint(p));
+    if (r.key === "lenin_route" && p > 0 && p < 0.999) leninWalking = true;   // шаги — пока маршрут Ленина в движении
     // reveal tube progressively
     const total = r.geo.index ? r.geo.index.count : r.geo.attributes.position.count;
     r.geo.setDrawRange(0, Math.floor(total * p));
   }
+  if (window.MTK24_AUDIO) (leninWalking ? window.MTK24_AUDIO.stepsOn() : window.MTK24_AUDIO.stepsOff());
 }
 
 // ----------------------------------------------------------------- FX (спецэффекты кадров)
@@ -572,6 +577,7 @@ const FX_BUILD = {
     }
     fxItems.push({ update(lp, time) {
       const fp = fpOf(lp, at);
+      if (window.MTK24_AUDIO) (fp > 0.02 && fp < 0.96 ? window.MTK24_AUDIO.radioOn() : window.MTK24_AUDIO.radioOff());   // радио — ВСЮ трансляцию петлёй, без наложения
       for (const s of segs) {
         s.tube.material.opacity = 0.22 * fp;
         s.dots.forEach((d, i) => {
@@ -599,7 +605,7 @@ const FX_BUILD = {
     } });
   },
   // полноэкранная вспышка — одноразовый HUD-оверлей
-  flash(f) { fxFlashes.push({ lp: f.at ?? 0.5, fired: false, color: "rgba(247,249,239,0.95)" }); },
+  flash(f) { fxFlashes.push({ lp: f.at ?? 0.5, fired: false, color: "rgba(247,249,239,0.95)", sound: "flash" }); },
   // кольцо: «прицельное» кольцо вокруг объекта, медленно сжимается за кадр
   ring(f) {
     const c = fxPoint(f.around); if (!c) return; const at = f.at ?? 0;
@@ -623,11 +629,13 @@ const FX_BUILD = {
     const ball = glowSprite(0xfff0c0, 4);
     const impact = glowSprite(COL.redLight, 5); impact.position.copy(win);
     fxFlashes.push({ lp: at + 0.68 * (1 - at), fired: false, color: "rgba(226,65,43,0.6)" });
+    let boomed = false;
     fxItems.push({ update(lp, time) {
       const fp = fpOf(lp, at);
       let o = tri(fp, 0.10, 0.12); signal.material.opacity = o; signal.scale.setScalar(4 + 6 * o);
       o = tri(fp, 0.33, 0.10); muzzle.material.opacity = 1.2 * o; muzzle.scale.setScalar(4 + 12 * o);
       if (muzzleLight) { muzzleLight.position.set(aur.x, 10, aur.z); muzzleLight.intensity = 700 * o; }   // Ф2: вспышка = реальный свет
+      if (!boomed && fp >= 0.33) { boomed = true; if (window.MTK24_AUDIO) window.MTK24_AUDIO.fx("shot"); }   // звук выстрела — НА дульной вспышке, не на попадании
       const sp = seg(fp, 0.30, 0.62), sr = 2 + sp * 26;
       shock.scale.set(sr, sr, 1); shock.material.opacity = (1 - sp) * 0.7;
       const bp = seg(fp, 0.34, 0.64);
@@ -676,11 +684,13 @@ const FX_BUILD = {
 function buildFx(shot) {
   fxGroup.clear(); fxItems = []; fxFlashes = [];
   if (muzzleLight) muzzleLight.intensity = 0;          // Ф2: гасим вспышку при смене кадра
+  if (window.MTK24_AUDIO) window.MTK24_AUDIO.radioOff();   // стоп радио при смене кадра (нет «хвоста»)
   for (const f of (shot.fx || [])) { const b = FX_BUILD[f.type]; if (b) b(f); }
 }
 function updateFx(lp, time) {
   for (const it of fxItems) it.update(lp, time);
-  for (const fl of fxFlashes) if (!fl.fired && lp >= fl.lp) { fl.fired = true; triggerFlash(fl.color); }
+  for (const fl of fxFlashes) if (!fl.fired && lp >= fl.lp) { fl.fired = true; triggerFlash(fl.color);
+    if (fl.sound && window.MTK24_AUDIO) window.MTK24_AUDIO.fx(fl.sound); }
 }
 
 // ----------------------------------------------------------------- camera rig
@@ -792,6 +802,7 @@ function applyShot(i) {
   ticks.forEach((tk, k) => { tk.classList.toggle("active", k === i); tk.classList.toggle("done", k < i); });
   setFraming(s);
   applyShotToObjects(i); buildRoutes(s); buildFx(s);
+  if (window.MTK24_AUDIO) window.MTK24_AUDIO.shot(i, s);   // звук кадра (гул/щелчки/акцент)
   // 3D-вьюер в техзоне: показать модель ориентира текущего кадра (iframe _qa.html через postMessage)
   if (hud.mdlView && hud.mdlView.contentWindow) {
     const keys = (s.focus || []).concat((s.points || []).map((p) => p.key));
@@ -851,7 +862,7 @@ function frame(now) {
 }
 
 // ----------------------------------------------------------------- controls
-hud.play.addEventListener("click", () => { playing = !playing; hud.play.textContent = playing ? "❚❚" : "►"; });
+hud.play.addEventListener("click", () => { playing = !playing; hud.play.textContent = playing ? "❚❚" : "►"; if (window.MTK24_AUDIO) window.MTK24_AUDIO.setPlaying(playing); });
 hud.track.addEventListener("click", (e) => {
   const r = hud.track.getBoundingClientRect();
   t = Math.min(SCN.duration - 0.01, Math.max(0, (e.clientX - r.left) / r.width * SCN.duration));
