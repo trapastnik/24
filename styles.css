@@ -105,6 +105,22 @@ html, body {
   max-width: 100%;
 }
 
+/* панель освещения (тумблеры + слайдеры) */
+.tech-ctrls {
+  flex-shrink: 0; margin-top: 0.7em; padding-top: 0.7em; border-top: 1px solid #1c2329;
+  display: flex; flex-direction: column; gap: 0.5em;
+  font-family: "20 Kopeek", monospace; font-size: clamp(10px,1.2vh,13px); color: var(--paper);
+}
+.ctrl-switch { display: flex; align-items: center; gap: 0.55em; cursor: pointer; opacity: 0.92; }
+.ctrl-switch input { accent-color: var(--brass); width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
+.ctrl-row { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 0.6em; opacity: 0.9; }
+.ctrl-row label { color: var(--window); white-space: nowrap; }
+.ctrl-row input[type="range"] {
+  grid-column: 1 / -1; width: 100%; height: 3px; margin: 0.25em 0 0.1em;
+  accent-color: var(--brass); cursor: pointer; background: rgba(157,163,166,0.3);
+}
+.ctrl-val { color: var(--brass); font-weight: 600; justify-self: end; min-width: 3.2em; text-align: right; }
+
 /* большие часы + календарь (время события) */
 .clockbox {
   position: absolute; z-index: 6; top: clamp(16px,2.6vh,40px); left: 50%; transform: translateX(-50%);

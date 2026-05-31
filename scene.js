@@ -10,6 +10,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 // ----------------------------------------------------------------- palette
 const COL = {
@@ -26,6 +27,29 @@ const PD = 100, PW = PD * TEX_W / TEX_H;     // плоскость карты (w
 // нормированные [u,v] (0..1, верх-лево) → мировые координаты на плоскости
 function uvToWorld(u, v, y = 0) {
   return new THREE.Vector3((u - 0.5) * PW, y, (v - 0.5) * PD);
+}
+
+// гео-регистрация OSM(lon,lat)→[u,v]→мир (Ф0, data/geo_register.js) — для массинга/воды/дорог
+const GEOREG = window.MTK24_GEOREG || null;
+function geoToWorld(lon, lat, y = 0) {
+  if (!GEOREG) return null;
+  let u, v;
+  if (GEOREG.type === "tps") {                 // thin-plate spline — точно через все опорные точки
+    const X = (lon - GEOREG.mx) * GEOREG.sc, Y = (lat - GEOREG.my) * GEOREG.sc, cx = GEOREG.cx, cy = GEOREG.cy;
+    u = GEOREG.au[0] + GEOREG.au[1] * X + GEOREG.au[2] * Y;
+    v = GEOREG.av[0] + GEOREG.av[1] * X + GEOREG.av[2] * Y;
+    for (let i = 0; i < cx.length; i++) {
+      const dx = X - cx[i], dy = Y - cy[i], r2 = dx * dx + dy * dy;
+      if (r2 > 1e-12) { const ph = 0.5 * r2 * Math.log(r2); u += GEOREG.wu[i] * ph; v += GEOREG.wv[i] * ph; }
+    }
+  } else if (GEOREG.H) {                        // гомография (fallback)
+    const H = GEOREG.H, w = H[6] * lon + H[7] * lat + H[8];
+    u = (H[0] * lon + H[1] * lat + H[2]) / w; v = (H[3] * lon + H[4] * lat + H[5]) / w;
+  } else {                                      // аффин (fallback)
+    u = GEOREG.U[0] * lon + GEOREG.U[1] * lat + GEOREG.U[2];
+    v = GEOREG.V[0] * lon + GEOREG.V[1] * lat + GEOREG.V[2];
+  }
+  return uvToWorld(u, v, y);
 }
 
 // ----------------------------------------------------------------- data
@@ -62,9 +86,11 @@ function preloadModels() {
 
 // ----------------------------------------------------------------- three core
 const canvas = document.getElementById("gl");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;                 // фаза 2: тени от зданий (вкл из техзоны)
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(COL.ink);
@@ -72,14 +98,222 @@ scene.fog = new THREE.Fog(COL.ink, 220, 480);
 
 const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 3000);
 
-// lighting (for 3D models; map itself is unlit/basic)
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-const key = new THREE.DirectionalLight(0xfff1d6, 1.1);
-key.position.set(-60, 120, 40); scene.add(key);
+// lighting (for 3D models; map itself is unlit/basic — её яркость ведём тинтом)
+const amb = new THREE.AmbientLight(0xffffff, 0.6); scene.add(amb);
+const sun = new THREE.DirectionalLight(0xfff1d6, 1.1);     // = Солнце (позиция по астрономии)
+sun.position.set(-60, 120, 40); scene.add(sun);
 // мягкое IBL, чтобы латунь (шпиль/купола) читалась как золото без скайбокса
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.55;
+
+// ----------------------------------------------------------------- постпроцессинг (самодостаточный мини-композер)
+// «Киношный» проход без аддонов three.js: сцена рендерится в ЛИНЕЙНЫЙ HDR-таргет
+// (toneMapping выключен), отдельно считается bloom (свечение огней/вспышек/латуни),
+// финальный шейдер тонмапит (ACES) и вручную кодирует в sRGB — надёжно к версии three.
+// Поверх грейда: виньетка, плёночное зерно, лёгкая хроматическая аберрация к краям.
+// Тумблер — клавиша P (для сравнения «до/после»). HUD/титры (DOM) проход не трогает.
+const post = (() => {
+  const HF = THREE.HalfFloatType, LIN = THREE.LinearSRGBColorSpace;
+  const lit = (opts) => { const rt = new THREE.WebGLRenderTarget(1, 1, Object.assign(
+    { type: HF, magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter }, opts));
+    rt.texture.colorSpace = LIN; return rt; };
+  const rtScene = lit();                                   // линейный HDR-кадр (с depth)
+  const rtBrite = lit({ depthBuffer: false });             // яркие области (1/2 разрешения)
+  const rtA = lit({ depthBuffer: false }), rtB = lit({ depthBuffer: false });
+
+  const fsScene = new THREE.Scene(), fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null); fsScene.add(fsQuad);
+  const VERT = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+  const blit = (mat, target) => { fsQuad.material = mat; renderer.setRenderTarget(target || null); renderer.render(fsScene, fsCam); };
+
+  const briteMat = new THREE.ShaderMaterial({ vertexShader: VERT,
+    uniforms: { tDiffuse: { value: null }, threshold: { value: 1.0 } },
+    fragmentShader: `varying vec2 vUv; uniform sampler2D tDiffuse; uniform float threshold;
+      void main(){ vec3 c = texture2D(tDiffuse, vUv).rgb; float l = max(c.r, max(c.g, c.b));
+        gl_FragColor = vec4(c * max(0.0, l - threshold) / max(l, 1e-4), 1.0); }` });
+
+  const blurMat = new THREE.ShaderMaterial({ vertexShader: VERT,
+    uniforms: { tDiffuse: { value: null }, dir: { value: new THREE.Vector2() } },
+    fragmentShader: `varying vec2 vUv; uniform sampler2D tDiffuse; uniform vec2 dir;
+      void main(){ vec3 s = texture2D(tDiffuse, vUv).rgb * 0.227027;
+        s += texture2D(tDiffuse, vUv + dir * 1.3846).rgb * 0.316216;
+        s += texture2D(tDiffuse, vUv - dir * 1.3846).rgb * 0.316216;
+        s += texture2D(tDiffuse, vUv + dir * 3.2308).rgb * 0.070270;
+        s += texture2D(tDiffuse, vUv - dir * 3.2308).rgb * 0.070270;
+        gl_FragColor = vec4(s, 1.0); }` });
+
+  const gradeMat = new THREE.ShaderMaterial({ vertexShader: VERT,
+    uniforms: { tScene: { value: null }, tBloom: { value: null }, bloomStr: { value: 0.85 },
+      exposure: { value: 1.06 }, grain: { value: 0.035 }, vignette: { value: 1.2 },
+      aberration: { value: 0.0016 }, time: { value: 0 } },
+    fragmentShader: `varying vec2 vUv;
+      uniform sampler2D tScene, tBloom; uniform float bloomStr, exposure, grain, vignette, aberration, time;
+      vec3 ACES(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }
+      vec3 lin2srgb(vec3 c){ return mix(1.055*pow(max(c,0.0), vec3(0.4166667))-0.055, c*12.92, step(c, vec3(0.0031308))); }
+      float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      void main(){ vec2 d = vUv - 0.5; float r2 = dot(d, d);
+        vec3 col;                                          // хром. аберрация растёт к краям (r2)
+        col.r = texture2D(tScene, vUv + d * aberration * r2 * 4.0).r;
+        col.g = texture2D(tScene, vUv).g;
+        col.b = texture2D(tScene, vUv - d * aberration * r2 * 4.0).b;
+        col += texture2D(tBloom, vUv).rgb * bloomStr;
+        col *= exposure; col = ACES(col);
+        col *= mix(1.0, smoothstep(0.95, 0.18, r2 * vignette), 0.6);    // виньетка
+        float luma = dot(col, vec3(0.299, 0.587, 0.114));               // зерно: слабее в тенях
+        col += (hash(vUv + fract(time)) - 0.5) * grain * (0.35 + 0.65 * luma);
+        gl_FragColor = vec4(lin2srgb(col), 1.0); }` });
+
+  return {
+    enabled: true,
+    setSize(w, h) {
+      w = Math.max(1, Math.floor(w)); h = Math.max(1, Math.floor(h));
+      rtScene.setSize(w, h);
+      const hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1);
+      rtBrite.setSize(hw, hh); rtA.setSize(hw, hh); rtB.setSize(hw, hh);
+    },
+    render(time) {
+      if (!this.enabled) { renderer.toneMapping = THREE.NoToneMapping; renderer.setRenderTarget(null); renderer.render(scene, camera); return; }
+      renderer.toneMapping = THREE.NoToneMapping;                       // тонмаппинг делаем сами в грейде
+      renderer.setRenderTarget(rtScene); renderer.render(scene, camera);
+      briteMat.uniforms.tDiffuse.value = rtScene.texture; blit(briteMat, rtBrite);
+      let src = rtBrite;                                                // разделимый блюр H/V ×2
+      for (let i = 0; i < 2; i++) {
+        blurMat.uniforms.tDiffuse.value = src.texture; blurMat.uniforms.dir.value.set(1.4 / rtBrite.width, 0); blit(blurMat, rtA);
+        blurMat.uniforms.tDiffuse.value = rtA.texture; blurMat.uniforms.dir.value.set(0, 1.4 / rtBrite.height); blit(blurMat, rtB);
+        src = rtB;
+      }
+      gradeMat.uniforms.tScene.value = rtScene.texture;
+      gradeMat.uniforms.tBloom.value = rtB.texture;
+      gradeMat.uniforms.time.value = time;
+      blit(gradeMat, null);
+    },
+  };
+})();
+
+// ----------------------------------------------------------------- динамическое освещение (день/ночь по времени события)
+// Солнце над Петроградом (59.94°N) по ВРЕМЕНИ СОБЫТИЯ. В конце октября оно едва
+// встаёт (макс. ~17° в полдень), поэтому почти весь ролик — золотой час / сумерки / ночь.
+const PG_LAT = 59.9375;
+function sunPos(min) {                       // → { altDeg, az(рад от севера по часовой) }
+  const day = Math.floor(min / 1440), mm = ((min % 1440) + 1440) % 1440;
+  const doy = 297 + day, hh = mm / 60;       // 24 окт 1917 = 297-й день года
+  const R = Math.PI / 180;
+  const decl = -23.44 * Math.cos(R * (360 / 365 * (doy + 10)));
+  const B = R * (360 / 365 * (doy - 81));
+  const eot = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
+  const H = R * 15 * (hh + eot / 60 - 12);
+  const la = R * PG_LAT, de = R * decl;
+  const altDeg = Math.asin(Math.sin(la) * Math.sin(de) + Math.cos(la) * Math.cos(de) * Math.cos(H)) / R;
+  let az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(la) - Math.tan(de) * Math.cos(la)) + Math.PI;
+  return { altDeg, az };
+}
+// ключевые «стопы» неба по высоте Солнца (цвета лерпятся между ними)
+const C = (h) => new THREE.Color(h);
+const SKY = [
+  { a: -18, sunC: C(0x9ab0e6), sunI: 0.18, ambC: C(0x2a3a5c), ambI: 0.40, mapC: C(0x2c3858), bgC: C(0x05080f), fogC: C(0x05080f), fogN: 150, fogF: 430, env: 0.30 }, // глубокая ночь
+  { a:  -6, sunC: C(0x7a86b8), sunI: 0.35, ambC: C(0x3b4668), ambI: 0.50, mapC: C(0x515877), bgC: C(0x141d33), fogC: C(0x141d33), fogN: 170, fogF: 450, env: 0.38 }, // сумерки
+  { a:   0, sunC: C(0xe08a52), sunI: 0.95, ambC: C(0x5f6486), ambI: 0.55, mapC: C(0xa08376), bgC: C(0x3a3550), fogC: C(0x3a3550), fogN: 190, fogF: 460, env: 0.46 }, // у горизонта
+  { a:   6, sunC: C(0xffb368), sunI: 1.25, ambC: C(0x8fa0bd), ambI: 0.56, mapC: C(0xe9cfa8), bgC: C(0x6d6f84), fogC: C(0x6d6f84), fogN: 200, fogF: 470, env: 0.50 }, // золотой час
+  { a:  16, sunC: C(0xffe9c6), sunI: 1.45, ambC: C(0xaec2d6), ambI: 0.60, mapC: C(0xfbf3e2), bgC: C(0x9fb2c6), fogC: C(0x9fb2c6), fogN: 220, fogF: 490, env: 0.55 }, // низкий день
+];
+function gradeAt(altDeg) {
+  let lo = SKY[0], hi = SKY[SKY.length - 1];
+  if (altDeg <= lo.a) hi = lo;
+  else if (altDeg >= hi.a) lo = hi;
+  else for (let i = 0; i < SKY.length - 1; i++) if (altDeg >= SKY[i].a && altDeg <= SKY[i + 1].a) { lo = SKY[i]; hi = SKY[i + 1]; break; }
+  const t = hi.a === lo.a ? 0 : (altDeg - lo.a) / (hi.a - lo.a), L = (x, y) => x + (y - x) * t;
+  return {
+    sunC: new THREE.Color().lerpColors(lo.sunC, hi.sunC, t), sunI: L(lo.sunI, hi.sunI),
+    ambC: new THREE.Color().lerpColors(lo.ambC, hi.ambC, t), ambI: L(lo.ambI, hi.ambI),
+    mapC: new THREE.Color().lerpColors(lo.mapC, hi.mapC, t),
+    bgC: new THREE.Color().lerpColors(lo.bgC, hi.bgC, t),
+    fogC: new THREE.Color().lerpColors(lo.fogC, hi.fogC, t), fogN: L(lo.fogN, hi.fogN), fogF: L(lo.fogF, hi.fogF),
+    env: L(lo.env, hi.env),
+  };
+}
+// базовый (ровный) свет — к нему сводимся при выключенном эффекте / contrast=0
+const BASE = { sunC: C(0xfff1d6), sunI: 1.1, ambC: C(0xffffff), ambI: 0.6, mapC: C(0xffffff),
+  bgC: C(COL.ink), fogC: C(COL.ink), fogN: 220, fogF: 480, env: 0.55 };
+const BASE_POS = new THREE.Vector3(-60, 120, 40);
+const sunGoalPos = new THREE.Vector3().copy(BASE_POS);
+// настройки из техзоны (живая правка слайдерами/тумблерами)
+const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, nightLights: true, cityCut: 1.4 };
+
+function updateLighting(sm, dt, snap) {
+  const { altDeg, az } = sunPos(sm), g = gradeAt(altDeg);
+  const w = FX_SET.light ? FX_SET.contrast : 0;     // 0 = базовый свет, 1 = полный день/ночь
+  // позиция Солнца: высота не ниже «пола» (реальные ~17° в полдень слишком низки)
+  const ap = Math.max(altDeg, FX_SET.sunFloor) * Math.PI / 180;
+  const astro = new THREE.Vector3(Math.cos(ap) * Math.sin(az), Math.sin(ap), -Math.cos(ap) * Math.cos(az)).multiplyScalar(220);
+  sunGoalPos.copy(BASE_POS).lerp(astro, w);
+  const mixC = (a, b) => a.clone().lerp(b, w), mixN = (a, b) => a + (b - a) * w;
+  const k = snap ? 1 : 1 - Math.pow(0.05, dt);
+  sun.position.lerp(sunGoalPos, k);
+  const nf = Math.min(1, Math.max(0, (6 - altDeg) / 12));   // Ф2: 0 день(+6°)…1 ночь(−6°)
+  const nightDim = 1 - 0.6 * nf;                            // ночью топим базовый свет — драма от локальных источников
+  sun.color.lerp(mixC(BASE.sunC, g.sunC), k); sun.intensity += (mixN(BASE.sunI, g.sunI) * nightDim - sun.intensity) * k;
+  amb.color.lerp(mixC(BASE.ambC, g.ambC), k);
+  amb.intensity += (mixN(BASE.ambI, g.ambI) * (1 - 0.55 * nf) - amb.intensity) * k;   // ночью гасим плоский ambient
+  if (mapPlane) mapPlane.material.color.lerp(mixC(BASE.mapC, g.mapC), k);
+  if (scene.background) scene.background.lerp(mixC(BASE.bgC, g.bgC), k);
+  if (scene.fog) { scene.fog.color.lerp(mixC(BASE.fogC, g.fogC), k);
+    scene.fog.near += (mixN(BASE.fogN, g.fogN) - scene.fog.near) * k; scene.fog.far += (mixN(BASE.fogF, g.fogF) - scene.fog.far) * k; }
+  scene.environmentIntensity += (mixN(BASE.env, g.env) * (1 - 0.5 * nf) - scene.environmentIntensity) * k;
+  // Ф1: карта сама принимает тени; sun держится над горизонтом (sunFloor) как «ключевой»
+  // свет → длинные тени читаются и ночью. Включение теней — постоянное (FX_SET.shadows).
+}
+
+// ----- Ф2: ночной свет как драматургия (мотивированные локальные источники поверх астро) -----
+// Пул точечных источников назначается активным/захваченным объектам кадра (их единицы):
+// тёплый = взято ВРК / в фокусе ВРК, холодный = противник. Сила растёт ночью (nightFactor).
+// Дульная вспышка «Авроры» — отдельный импульсный источник (см. FX_BUILD.shot).
+const NIGHT_POOL = [];
+let muzzleLight = null;
+function ensureNightRig() {
+  if (NIGHT_POOL.length) return;
+  for (let i = 0; i < 8; i++) {
+    const l = new THREE.PointLight(0xffffff, 0, 38, 2); l.castShadow = false;
+    scene.add(l); NIGHT_POOL.push(l);
+  }
+  muzzleLight = new THREE.PointLight(0xffe6b0, 0, 170, 2); muzzleLight.castShadow = false; scene.add(muzzleLight);
+}
+function updateNightLights(sm, lp, time, snap) {
+  if (!NIGHT_POOL.length) return;
+  const { altDeg } = sunPos(sm);
+  const on = FX_SET.nightLights ? Math.min(1, Math.max(0, (6 - altDeg) / 12)) : 0;
+  const cand = [];
+  for (const key in objects) {
+    const o = objects[key], red = isCaptured(o, curIdx, lp);
+    if (!(o.isActive || red)) continue;
+    const L = loc(key); if (!L || L.u == null) continue;
+    cand.push({ w: uvToWorld(L.u, L.v, 0), warm: red || o.force === "vrk", active: o.isActive });
+  }
+  cand.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0));
+  const k = snap ? 1 : 0.15;
+  NIGHT_POOL.forEach((l, i) => {
+    const c = cand[i];
+    if (!c) { l.intensity += (0 - l.intensity) * k; return; }
+    l.position.set(c.w.x, 7, c.w.z);
+    l.color.setHex(c.warm ? 0xffb464 : 0x5e78c0);
+    const pulse = 0.85 + 0.15 * Math.sin(time * 3 + i);
+    l.intensity += (on * (c.active ? 30 : 16) * pulse - l.intensity) * k;
+  });
+}
+
+// ----- Ф1: карта теперь MeshStandard и САМА принимает тени — отдельная
+// ShadowMaterial-плоскость не нужна. sun = «ключевой» свет, отбрасывающий тени зданий.
+function setupSunShadow() {
+  const cam = sun.shadow.camera;
+  cam.left = -70; cam.right = 70; cam.top = 70; cam.bottom = -70; cam.near = 80; cam.far = 480;
+  cam.updateProjectionMatrix();
+  sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.8;
+  applyShadowSettings();
+}
+function applyShadowSettings() {
+  sun.castShadow = FX_SET.shadows;
+  if ("intensity" in sun.shadow) sun.shadow.intensity = Math.min(1, 0.5 + FX_SET.shadowStr);
+}
 
 // ----------------------------------------------------------------- map plane
 let mapPlane;
@@ -87,9 +321,12 @@ const texLoader = new THREE.TextureLoader();
 texLoader.load(TEX, (tex) => {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  const mat = new THREE.MeshBasicMaterial({ map: tex });
+  // Ф1: карта — освещаемая матовая поверхность (принимает свет/тени), не unlit-картинка.
+  // Тинт день/ночь по-прежнему через material.color (updateLighting). roughness 1, без бликов.
+  const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.68, metalness: 0.0, envMapIntensity: 0.5 });
   mapPlane = new THREE.Mesh(new THREE.PlaneGeometry(PW, PD), mat);
   mapPlane.rotation.x = -Math.PI / 2;     // лечь в плоскость XZ, лицом вверх
+  mapPlane.receiveShadow = true;
   scene.add(mapPlane);
   // a darker base under the map for the fade-from-dark intro
   boot();
@@ -145,12 +382,15 @@ const HERO = ["smolny", "winter", "fortress", "mariinsky", "tauride"];
 const DIM_OP = 0.22, DIM_MODEL_OP = 0.3;     // прозрачность «не в фокусе»
 
 function addForcePad(w, size) {
-  // плашка-подсветка в цвете силы под 3D-моделью (цвет/яркость задаёт updateObjects)
-  const mat = new THREE.MeshStandardMaterial({
-    color: COL.vrk, emissive: COL.vrk, emissiveIntensity: 0.3,
-    roughness: 0.6, metalness: 0.0, transparent: true, opacity: 0.4 });
-  const pad = new THREE.Mesh(new THREE.CylinderGeometry(size * 0.6, size * 0.6, 0.4, 28), mat);
-  pad.position.set(w.x, 0.2, w.z); objGroup.add(pad); return pad;
+  // Ф6: мягкая «лужа» цвета силы под объектом. NormalBlending (НЕ аддитив) — не засвечивает
+  // соседние здания массинга; радиус ограничен, чтобы у крупных моделей («Аврора», size 12)
+  // плашка не разрасталась на полгорода. Принадлежность в основном несёт ночной свет (Ф2).
+  const r = Math.min(size, 4.5) * 1.3;
+  const mat = new THREE.MeshBasicMaterial({ map: TEX_GLOW, color: COL.vrk, transparent: true,
+    opacity: 0, depthWrite: false });
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(r, r), mat);
+  pad.rotation.x = -Math.PI / 2; pad.position.set(w.x, 0.1, w.z); pad.renderOrder = 1;
+  objGroup.add(pad); return pad;
 }
 // индекс всех объектов сценария: какая сила, каким кадром (и при каком lp) захвачен
 function objectIndex() {
@@ -180,7 +420,7 @@ function buildObjects() {
     if (modelCache[key]) {
       const model = modelCache[key].clone(true);
       model.traverse((c) => { if (c.isMesh) {
-        c.material = c.material.clone(); c.material.transparent = true;
+        c.material = c.material.clone(); c.material.transparent = true; c.castShadow = true;
         c.userData.emHex = c.material.emissive ? c.material.emissive.getHex() : 0;
         c.userData.emInt = c.material.emissiveIntensity ?? 1;
       }});
@@ -191,7 +431,7 @@ function buildObjects() {
       const fw = isBridge ? 2.0 : (hero ? 3.6 : 2.6), fh = isBridge ? 1.2 : (hero ? 7.0 : 4.2);
       const box = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, fw),
         new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.15, transparent: true }));
-      box.position.set(w.x, fh / 2, w.z); objGroup.add(box);
+      box.castShadow = true; box.position.set(w.x, fh / 2, w.z); objGroup.add(box);
       rec.mesh = box; rec.isModel = false;
     }
     objects[key] = rec;
@@ -229,9 +469,9 @@ function updateObjects(lp, time) {
           else { m.emissive.setHex(c.userData.emHex); m.emissiveIntensity = c.userData.emInt; }
         }});
       if (o.pad) { const pm = o.pad.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.graphite);
-        pm.color.setHex(col); pm.emissive.setHex(col);
-        pm.emissiveIntensity = pulseE != null ? pulseE : (act ? (red ? 0.6 : force === "vrk" ? 0.6 : 0.25) : (red ? 0.3 : 0.12));
-        pm.opacity = act ? 0.5 : 0.18;
+        pm.color.setHex(col);
+        const base = act ? (red ? 0.20 : force === "vrk" ? 0.18 : 0.10) : (red ? 0.08 : 0.035);
+        pm.opacity = pulseE != null ? 0.09 + 0.26 * pulseE : base;
       }
     } else {
       const m = o.mesh.material, col = red ? COL.redLight : (force === "vrk" ? COL.vrk : COL.pg);
@@ -386,6 +626,7 @@ const FX_BUILD = {
       const fp = fpOf(lp, at);
       let o = tri(fp, 0.10, 0.12); signal.material.opacity = o; signal.scale.setScalar(4 + 6 * o);
       o = tri(fp, 0.33, 0.10); muzzle.material.opacity = 1.2 * o; muzzle.scale.setScalar(4 + 12 * o);
+      if (muzzleLight) { muzzleLight.position.set(aur.x, 10, aur.z); muzzleLight.intensity = 700 * o; }   // Ф2: вспышка = реальный свет
       const sp = seg(fp, 0.30, 0.62), sr = 2 + sp * 26;
       shock.scale.set(sr, sr, 1); shock.material.opacity = (1 - sp) * 0.7;
       const bp = seg(fp, 0.34, 0.64);
@@ -433,6 +674,7 @@ const FX_BUILD = {
 };
 function buildFx(shot) {
   fxGroup.clear(); fxItems = []; fxFlashes = [];
+  if (muzzleLight) muzzleLight.intensity = 0;          // Ф2: гасим вспышку при смене кадра
   for (const f of (shot.fx || [])) { const b = FX_BUILD[f.type]; if (b) b(f); }
 }
 function updateFx(lp, time) {
@@ -551,19 +793,18 @@ function applyShot(i) {
 }
 
 // ----------------------------------------------------------------- clock / loop
-let t = 0, playing = true, curIdx = -1, prev = 0, animT = 0;
+let t = 0, playing = true, curIdx = -1, prev = 0, animT = 0, rendering = false;
 function shotIndexAt(tt) { let i = 0; SCN.shots.forEach((s, k) => { if (tt >= s.t0) i = k; }); return i; }
 
-function frame(now) {
-  const dt = prev ? Math.min(0.05, (now - prev) / 1000) : 0; prev = now; animT += dt;
-  if (playing) { t += dt; if (t >= SCN.duration) t = 0; }
+// один кадр при текущем t: применить состояние и отрисовать. snap=true — мгновенно
+// поставить камеру/свет (без плавной интерполяции; нужно для 1-го кадра рендера/перемотки).
+function tick(dt, snap) {
   const i = shotIndexAt(t);
   if (i !== curIdx) { curIdx = i; applyShot(i); }
   const s = SCN.shots[i];
   const lp = Math.min(1, Math.max(0, (t - s.t0) / Math.max(0.001, s.t1 - s.t0)));
 
-  // ease camera
-  const k = 1 - Math.pow(0.0016, dt);
+  const k = snap ? 1 : 1 - Math.pow(0.0016, dt);    // ease camera
   camera.position.lerp(camGoalPos, k);
   camTarget.lerp(camGoalLook, k);
   camera.lookAt(camTarget);
@@ -576,14 +817,23 @@ function frame(now) {
 
   // часы/календарь по ВРЕМЕНИ СОБЫТИЯ (а не по минутам видео)
   if (s.s0 != null && s.s1 != null) {
-    const sm = s.s0 + (s.s1 - s.s0) * lp, dt = storyDT(sm);
-    hud.evTime.textContent = dt.time;
-    hud.evDate.textContent = dt.date;
-    hud.clock.innerHTML = "<b>" + dt.short + " · " + dt.time + "</b>";
+    const sm = s.s0 + (s.s1 - s.s0) * lp, sdt = storyDT(sm);
+    hud.evTime.textContent = sdt.time;
+    hud.evDate.textContent = sdt.date;
+    hud.clock.innerHTML = "<b>" + sdt.short + " · " + sdt.time + "</b>";
+    updateLighting(sm, dt, snap);               // свет/цвет по времени суток (Солнце)
+    updateNightLights(sm, lp, animT, snap);     // Ф2: локальные источники (свет «живёт» в зданиях)
   }
   hud.fill.style.width = (t / SCN.duration * 100) + "%";
+  post.render(animT);
+}
 
-  renderer.render(scene, camera);
+function frame(now) {
+  const dt = prev ? Math.min(0.05, (now - prev) / 1000) : 0; prev = now;
+  if (rendering) { requestAnimationFrame(frame); return; }   // оффлайн-рендер ведёт кадры сам — живой цикл простаивает
+  animT += dt;
+  if (playing) { t += dt; if (t >= SCN.duration) t = 0; }
+  tick(dt, false);
   requestAnimationFrame(frame);
 }
 
@@ -598,6 +848,69 @@ window.addEventListener("keydown", (e) => {
   if (e.code === "Space") { e.preventDefault(); hud.play.click(); }
   else if (e.code === "ArrowRight") { const i = Math.min(SCN.shots.length - 1, shotIndexAt(t) + 1); t = SCN.shots[i].t0; curIdx = -1; }
   else if (e.code === "ArrowLeft") { const i = Math.max(0, shotIndexAt(t) - 1); t = SCN.shots[i].t0; curIdx = -1; }
+  else if (e.code === "KeyP") { post.enabled = !post.enabled; syncPostUI(); }   // постпроцессинг вкл/выкл (статус — в техзоне)
+});
+
+// ----------------------------------------------------------------- оффлайн-рендер сегмента (макс. качество)
+// Покадровый ДЕТЕРМИНИРОВАННЫЙ рендер [t0,t1] в супер-разрешении: сцена шагает фиксированным
+// dt = 1/fps, каждый кадр снимается с канваса в PNG и отправляется на локальный сервер
+// (edit_server.py → render/<run>/frame_XXXXX.png). Сборка в mp4 — ffmpeg (команда в консоли).
+// Захватывается ТОЛЬКО 3D-канвас с постпроцессингом; DOM-титры/панель в кадр не идут —
+// их запечёт будущий Puppeteer-проход (см. VIDEO-PLAN.md). Качество ведём высотой кадра.
+//   MTK24_render(t0, t1, { fps, height })   — напр. MTK24_render(187, 217, { height: 2160 })
+//   клавиша R — отрендерить ТЕКУЩИЙ кадр сценария в макс. качестве
+const canvasBlob = (mime, q) => new Promise((res) => canvas.toBlob(res, mime, q));
+async function MTK24_render(t0, t1, opt = {}) {
+  if (rendering) { console.warn("МТК24 · рендер уже идёт"); return; }
+  const fps = opt.fps || SCN.fps || 30;
+  const even = (n) => { n = Math.round(n); return n - (n % 2); };   // H.264/yuv420p требует чётные размеры
+  const H = even(opt.height || 2160);                              // высота кадра (супер-сэмплинг)
+  // формат кадра: jpeg q0.95 по умолчанию (в 4K PNG ~13 МБ/кадр — зерно не сжимается; jpeg ~2 МБ
+  // и для видео-пайплайна визуально неотличим). PNG-lossless — через { format: "png" }.
+  const fmt = (opt.format || "jpeg").toLowerCase() === "png" ? "png" : "jpeg";
+  const ext = fmt === "png" ? "png" : "jpg", mime = fmt === "png" ? "image/png" : "image/jpeg", q = opt.quality ?? 0.95;
+  t0 = Math.max(0, +t0 || 0); t1 = Math.min(SCN.duration, +t1 || SCN.duration);
+  if (t1 <= t0) { console.warn("МТК24 · пустой диапазон"); return; }
+  const N = Math.max(1, Math.round((t1 - t0) * fps));
+  const run = (opt.name || "seg") + "_" + Math.round(t0) + "-" + Math.round(t1) + "_" + Date.now();
+  const W = even(H * camera.aspect);
+  console.log(`%cМТК24 · рендер ${t0.toFixed(1)}–${t1.toFixed(1)} с · ${fps} fps · ${N} кадров · ${W}×${H} · ${fmt}`,
+    "color:#E8C24A;font-weight:bold");
+
+  rendering = true;                                              // живой цикл встаёт на паузу
+  const wasPlaying = playing, savedT = t, savedAnimT = animT, savedDPR = renderer.getPixelRatio();
+  const postWas = post.enabled; post.enabled = true;            // рендерим всегда с постпроцессингом
+  renderer.setPixelRatio(1); renderer.setSize(W, H, false); post.setSize(W, H);
+  curIdx = -1; animT = t0;                                       // фаза анимации = время сегмента
+  const dt = 1 / fps; let ok = 0, fail = 0;
+  for (let i = 0; i < N; i++) {
+    t = t0 + i * dt;
+    tick(dt, i === 0);                                          // 1-й кадр — снап камеры/света
+    const blob = await canvasBlob(mime, q);
+    const name = "frame_" + String(i + 1).padStart(5, "0") + "." + ext;
+    try {
+      const r = await fetch(`/api/render-frame?run=${encodeURIComponent(run)}&name=${name}`, { method: "POST", body: blob });
+      r.ok ? ok++ : fail++;
+    } catch (e) { fail++; }
+    if ((i + 1) % fps === 0 || i === N - 1)
+      console.log(`  ${i + 1}/${N} (${Math.round((i + 1) / N * 100)}%) · ок:${ok}${fail ? " · ошибок:" + fail : ""}`);
+  }
+  // вернуть живой режим
+  post.enabled = postWas; renderer.setPixelRatio(savedDPR); resize();
+  t = savedT; animT = savedAnimT; curIdx = -1; playing = wasPlaying; rendering = false;
+  console.log(`%cМТК24 · готово: ${ok} кадров → render/${run}/`, "color:#7ccb7c;font-weight:bold");
+  console.log(`%cСборка: %ctools/render_mp4.sh ${run}%c   (или: ffmpeg -framerate ${fps} -i render/${run}/frame_%05d.${ext} -c:v libx264 -crf 12 -pix_fmt yuv420p ${run}.mp4)`,
+    "color:#9fb2c6", "color:#fff", "color:#9fb2c6");
+  if (fail) console.warn(`МТК24 · ${fail} кадров не сохранились — сервер запущен с поддержкой /api/render-frame?`);
+  return { run, frames: ok, fps, W, H };
+}
+window.MTK24_render = MTK24_render;
+const R_KEY_HEIGHT = 1600;                                       // высота для клавиши R (консоль может больше: {height:2160})
+window.addEventListener("keydown", (e) => {                      // R — рендер ТЕКУЩЕГО кадра сценария в файл
+  if (e.code === "KeyR" && !e.repeat && !rendering) {
+    const s = SCN.shots[shotIndexAt(t)];
+    MTK24_render(s.t0, s.t1, { height: R_KEY_HEIGHT });
+  }
 });
 
 // ----------------------------------------------------------------- working screen (размер ТЗ)
@@ -616,21 +929,136 @@ function resize() {
   work.style.left = ((availW - wW) / 2) + "px";
   work.style.top = Math.max(0, (availH - wH) / 2) + "px";
   renderer.setSize(wW, wH, false);
+  const db = renderer.getDrawingBufferSize(new THREE.Vector2());
+  post.setSize(db.x, db.y);
   camera.aspect = wW / wH; camera.updateProjectionMatrix();
 }
 window.addEventListener("resize", resize);
 
+// ----------------------------------------------------------------- controls panel (техзона)
+// статус постпроцессинга в техзоне (синхрон с клавишей P и тумблером)
+function syncPostUI() {
+  const cx = document.getElementById("cx-post"), v = document.getElementById("cx-post-v");
+  if (cx) cx.checked = post.enabled;
+  if (v) { v.textContent = post.enabled ? "ВКЛ" : "ВЫКЛ"; v.style.color = post.enabled ? "#7ccb7c" : "#d27b6b"; }
+}
+function bindControls() {
+  const $ = (id) => document.getElementById(id);
+  const light = $("cx-light"), sunh = $("cx-sunh"), sunhV = $("cx-sunh-v"),
+        contrast = $("cx-contrast"), contrastV = $("cx-contrast-v"),
+        shadow = $("cx-shadow"), shp = $("cx-shadowp"), shpV = $("cx-shadowp-v");
+  if (!light) return;
+  light.checked = FX_SET.light;
+  sunh.value = FX_SET.sunFloor; sunhV.textContent = FX_SET.sunFloor + "°";
+  contrast.value = Math.round(FX_SET.contrast * 100); contrastV.textContent = contrast.value + "%";
+  shadow.checked = FX_SET.shadows;
+  shp.value = Math.round(FX_SET.shadowStr * 100); shpV.textContent = shp.value + "%";
+  light.addEventListener("change", () => { FX_SET.light = light.checked; });
+  sunh.addEventListener("input", () => { FX_SET.sunFloor = +sunh.value; sunhV.textContent = sunh.value + "°"; });
+  contrast.addEventListener("input", () => { FX_SET.contrast = +contrast.value / 100; contrastV.textContent = contrast.value + "%"; });
+  shadow.addEventListener("change", () => { FX_SET.shadows = shadow.checked; applyShadowSettings(); });
+  shp.addEventListener("input", () => { FX_SET.shadowStr = +shp.value / 100; shpV.textContent = shp.value + "%"; applyShadowSettings(); });
+  const citycut = $("cx-citycut"), citycutV = $("cx-citycut-v");
+  if (citycut) {
+    citycut.value = Math.round(FX_SET.cityCut * 100);
+    citycutV.textContent = Math.round(FX_SET.cityCut * 200) + " м";
+    citycut.addEventListener("input", () => { FX_SET.cityCut = +citycut.value / 100; citycutV.textContent = Math.round(FX_SET.cityCut * 200) + " м"; });
+    citycut.addEventListener("change", () => { rebuildCityMassing(); });   // перестроить массинг на отпускании ползунка
+  }
+  const postCx = $("cx-post");
+  if (postCx) postCx.addEventListener("change", () => { post.enabled = postCx.checked; syncPostUI(); });
+  syncPostUI();
+}
+
+// ----------------------------------------------------------------- Ф7: массинг города (OSM-контуры)
+// Из data/petrograd_buildings.json (12k контуров) строим единую экструдированную геометрию —
+// «город», сквозь который летит камера. Высота преувеличена (реальные дома ~0.1 ед на этой карте).
+// Вырезаем массинг вокруг hero-объектов (там стоят детальные GLB). Лениво, один раз, после 1-го кадра.
+const CITY_H_SCALE = 0.085;      // мировых единиц на метр высоты (с преувеличением; ~150 м/ед × ~13×)
+const CITY_EDGE = 0.30;          // доля bbox у края, на которой высота массинга плавно сходит в плоскость (шире = мягче)
+let cityMassing = null, cityData = null, cityWater = null;   // массинг + кэш данных для живой перестройки
+function pointInRing(x, y, r) {  // ray-casting: точка (lon,lat) внутри кольца
+  let inside = false;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++)
+    if (((r[i][1] > y) !== (r[j][1] > y)) &&
+        (x < (r[j][0] - r[i][0]) * (y - r[i][1]) / (r[j][1] - r[i][1] + 1e-18) + r[i][0])) inside = !inside;
+  return inside;
+}
+async function loadCityData() {            // фетч контуров + полигонов воды, один раз, в кэш
+  if (cityData) return true;
+  try { cityData = await (await fetch("./data/petrograd_buildings.json")).json(); }
+  catch (e) { console.warn("МТК24: контуры зданий не загрузились", e); return false; }
+  cityWater = [];
+  try {
+    const osm = await (await fetch("./data/petrograd_osm.json")).json();
+    if (osm && osm.water) for (const wf of osm.water) for (const ring of (wf.rings || [])) {
+      if (ring.length < 4) continue;
+      let a = 1e9, b2 = 1e9, c2 = -1e9, d = -1e9;
+      for (const p of ring) { if (p[0] < a) a = p[0]; if (p[0] > c2) c2 = p[0]; if (p[1] < b2) b2 = p[1]; if (p[1] > d) d = p[1]; }
+      cityWater.push({ ring, bb: [a, b2, c2, d] });
+    }
+  } catch (e) { /* без маски воды */ }
+  return true;
+}
+// строит/ПЕРЕСТРАИВАЕТ массинг по кэшу. Вырез вокруг hero — из FX_SET.cityCut (слайдер в техзоне).
+function rebuildCityMassing() {
+  if (!cityData || !GEOREG) return;
+  if (cityMassing) { scene.remove(cityMassing); cityMassing.geometry.dispose(); cityMassing.material.dispose(); cityMassing = null; }
+  const data = cityData;
+  const inWater = (lon, lat) => cityWater.some(w =>
+    lon >= w.bb[0] && lon <= w.bb[2] && lat >= w.bb[1] && lat <= w.bb[3] && pointInRing(lon, lat, w.ring));
+  const bb = data.bbox, dW = bb.east - bb.west, dS = bb.north - bb.south;
+  const ss = (x) => { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); };
+  const sEdge = (t) => Math.min(ss(t / CITY_EDGE), ss((1 - t) / CITY_EDGE));   // 0 у края bbox, 1 в центре
+  const cut2 = FX_SET.cityCut * FX_SET.cityCut;          // радиус² выреза вокруг hero (из слайдера)
+  const heroes = [];
+  for (const key in MODEL_CFG) { const L = loc(key); if (L && L.u != null) {
+    const w = uvToWorld(L.u, L.v, 0); heroes.push({ x: w.x, z: w.z }); } }
+  const geoms = []; let skipWater = 0;
+  for (const b of data.buildings) {
+    let clon = 0, clat = 0; for (const c of b.line) { clon += c[0]; clat += c[1]; }
+    clon /= b.line.length; clat /= b.line.length;
+    if (inWater(clon, clat)) { skipWater++; continue; }                        // не строим на воде
+    const h = b.h * CITY_H_SCALE * sEdge((clon - bb.west) / dW) * sEdge((clat - bb.south) / dS);   // высота тает к краю
+    if (h < 0.22) continue;
+    const pts = []; let cx = 0, cz = 0;
+    for (const c of b.line) { const w = geoToWorld(c[0], c[1], 0); if (!w) continue; pts.push(new THREE.Vector2(w.x, -w.z)); cx += w.x; cz += w.z; }
+    if (pts.length < 3) continue;
+    cx /= pts.length; cz /= pts.length;
+    if (cut2 > 0 && heroes.some(hh => (hh.x - cx) ** 2 + (hh.z - cz) ** 2 < cut2)) continue;   // вырез под hero-моделью
+    const g = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: h, bevelEnabled: false });
+    g.rotateX(-Math.PI / 2); g.deleteAttribute("uv");
+    geoms.push(g);
+  }
+  if (!geoms.length) return;
+  const merged = mergeGeometries(geoms, false);
+  geoms.forEach(g => g.dispose());
+  const mat = new THREE.MeshStandardMaterial({ color: 0x2f343d, roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide });
+  cityMassing = new THREE.Mesh(merged, mat);
+  cityMassing.castShadow = true; cityMassing.receiveShadow = true; cityMassing.renderOrder = 0;
+  scene.add(cityMassing);
+  console.log(`%cМТК24 · массинг: ${geoms.length} зданий · вырез ${FX_SET.cityCut.toFixed(1)} ед (на воде −${skipWater})`, "color:#9fb2c6");
+}
+async function buildCityMassing() {
+  if (cityMassing) return;
+  if (await loadCityData()) rebuildCityMassing();
+}
+
 // ----------------------------------------------------------------- boot
 function boot() {
-  resize(); buildTicks();
+  resize(); buildTicks(); bindControls();
   const s0 = SCN.shots[0]; setFraming(s0);
   camera.position.copy(camGoalPos); camTarget.copy(camGoalLook); camera.lookAt(camTarget);
   buildObjects();                                   // боксы-заглушки показываются сразу
   applyShotToObjects(shotIndexAt(t));
+  setupSunShadow();                                 // камера теней (карта сама принимает тени)
+  ensureNightRig();                                 // Ф2: пул ночных источников + дульная вспышка
+  updateLighting(s0.s0 ?? 720, 0, true);            // сразу выставить свет под 1-й кадр
   // когда .glb догрузятся — пересобираем объекты (модели вместо боксов)
   preloadModels().then(() => {
     buildObjects();
     applyShotToObjects(curIdx >= 0 ? curIdx : shotIndexAt(t));
   });
   requestAnimationFrame(frame);
+  buildCityMassing();                               // Ф7: массинг города (async, после 1-го кадра)
 }
