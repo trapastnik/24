@@ -1085,27 +1085,25 @@ const waterMat = new THREE.ShaderMaterial({
     time: { value: 0 }, sunDir: { value: new THREE.Vector3(0, 1, 0) }, camPos: { value: new THREE.Vector3() },
     nightF: { value: 0 },
     base: { value: new THREE.Color(0x0a1622) }, sky: { value: new THREE.Color(0x33506e) },
-    sunCol: { value: new THREE.Color(0xfff0d0) }, moonCol: { value: new THREE.Color(0x93b0e0) },
+    sunCol: { value: new THREE.Color(0xfff0d0) },
   },
   vertexShader: `varying vec3 vW; void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vW = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
-  fragmentShader: `varying vec3 vW; uniform float time, nightF; uniform vec3 sunDir, camPos, base, sky, sunCol, moonCol;
-    void main(){ vec2 p = vW.xz;
-      float nx = sin(p.x*0.25 + time*0.6) + sin((p.x+p.y)*0.17 + time*0.8)*0.7;
-      float nz = sin(p.y*0.31 - time*0.5) + sin((p.x-p.y)*0.21 - time*0.7)*0.7;
+  fragmentShader: `varying vec3 vW; uniform float time, nightF; uniform vec3 sunDir, camPos, base, sky, sunCol;
+    void main(){
+      float nx = sin(vW.x*0.25 + time*0.6) + sin((vW.x+vW.z)*0.17 + time*0.8)*0.7;
+      float nz = sin(vW.z*0.31 - time*0.5) + sin((vW.x-vW.z)*0.21 - time*0.7)*0.7;
       vec3 nrm = normalize(vec3(nx*0.06, 1.0, nz*0.06));
       vec3 view = normalize(camPos - vW);
       float fres = pow(1.0 - max(dot(nrm, view), 0.0), 3.0);
-      // тёмная вода + отражение неба: Френель + минимум (плашмя всё равно блестит) → не чёрная дыра
-      vec3 col = mix(base, sky, clamp(fres + 0.16 + 0.10*nightF, 0.0, 1.0));
+      float day = 1.0 - nightF;
+      // днём — тёмная вода + отражение неба (Френель); ночью отражение гаснет
+      vec3 col = mix(base, sky, clamp((fres + 0.16) * day, 0.0, 1.0));
       // дневной солнечный блик
       vec3 sd = normalize(sunDir);
       float spec = pow(max(dot(reflect(-sd, nrm), view), 0.0), 90.0) * max(sd.y, 0.0);
       col += sunCol * spec * 1.6;
-      // ночь: лунная дорожка + бегущие блёстки (детерминир. по time) — отделяет воду от чёрного массинга
-      vec3 md = normalize(vec3(0.30, 0.85, 0.35));
-      float mspec = pow(max(dot(reflect(-md, nrm), view), 0.0), 36.0);
-      float glit = max(0.0, sin(p.x*1.4 + p.y*1.1 + time*1.6)) * max(0.0, sin(p.x*0.7 - p.y*1.3 - time*1.1));
-      col += moonCol * (mspec*1.1 + glit*0.10) * nightF;
+      // ночь: вода просто слегка светится — без бликов/дорожки/расцветки
+      col += base * (0.8 * nightF);
       gl_FragColor = vec4(col, 0.9); }`,
 });
 let waterMesh = null;
