@@ -81,6 +81,16 @@
         <p id="vo-full"></p>
       </div>
 
+      <!-- ЗАМЕЧАНИЯ — заметки с привязкой к таймкоду (localStorage); под ГЗК -->
+      <div class="tech-notes" id="tech-notes">
+        <span class="tech-label">Замечания <b id="nt-count">0</b> · <span class="nt-act" id="nt-export">⧉ экспорт</span> · <span class="nt-act" id="nt-clear">очистить</span></span>
+        <div class="nt-list" id="nt-list"></div>
+        <div class="nt-add">
+          <input type="text" id="nt-input" placeholder="замечание к текущему моменту… (Enter)">
+          <button class="nt-btn" id="nt-add" title="добавить к текущему таймкоду">＋</button>
+        </div>
+      </div>
+
       <!-- ПАНЕЛЬ ОСВЕЩЕНИЯ — тумблеры и настройки эффекта день/ночь и теней -->
       <div class="tech-ctrls" id="tech-ctrls">
         <span class="tech-label">Освещение сцены</span>

@@ -161,6 +161,28 @@ html, body {
 .bt-readout b { color: var(--brass); }
 .bt-copy { color: var(--brass); cursor: pointer; text-decoration: underline dotted; }
 
+/* замечания — заметки с привязкой к таймкоду */
+.tech-notes { flex-shrink: 0; margin-top: 0.7em; padding-top: 0.7em; border-top: 1px solid #1c2329;
+  display: flex; flex-direction: column; gap: 0.4em; }
+.tech-notes .nt-act { color: var(--brass); cursor: pointer; text-decoration: underline dotted; }
+.nt-list { max-height: clamp(70px, 16vh, 180px); overflow-y: auto; display: flex; flex-direction: column; gap: 3px;
+  font-family: "20 Kopeek", monospace; }
+.nt-row { display: grid; grid-template-columns: auto 1fr auto; gap: 0.5em; align-items: baseline;
+  font-size: clamp(10px,1.2vh,13px); line-height: 1.3; }
+.nt-row .nt-t { color: var(--brass); cursor: pointer; white-space: nowrap; font-weight: 600; }
+.nt-row .nt-txt { color: var(--paper); opacity: 0.92; word-break: break-word; }
+.nt-row .nt-shot { color: var(--window); opacity: 0.65; }
+.nt-row .nt-x { color: var(--window); cursor: pointer; opacity: 0.5; }
+.nt-row .nt-x:hover { color: #e2412b; opacity: 1; }
+.nt-add { display: flex; gap: 0.4em; }
+.nt-add input { flex: 1; min-width: 0; background: #0b1116; border: 1px solid #1c2329; color: var(--paper);
+  font-family: "20 Kopeek", monospace; font-size: clamp(10px,1.2vh,13px); padding: 0.35em 0.5em; }
+.nt-add input::placeholder { color: var(--window); opacity: 0.6; }
+.nt-add input:focus { outline: none; border-color: var(--brass); }
+.nt-btn { background: rgba(210,183,115,0.18); border: 1px solid var(--brass); color: var(--brass);
+  cursor: pointer; padding: 0 0.7em; font-size: 1.1em; line-height: 1; }
+.nt-btn:hover { background: rgba(210,183,115,0.32); }
+
 /* большие часы + календарь (время события) */
 .clockbox {
   position: absolute; z-index: 6; top: clamp(16px,2.6vh,40px); left: 50%; transform: translateX(-50%);
@@ -336,6 +358,17 @@ html, body {
   transition: opacity 0.25s; pointer-events: none;
 }
 .tick.active .lbl, .track:hover .tick:hover .lbl { opacity: 0.92; }
+/* шкала видео-времени (метки каждые 30с) */
+.tmark { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 1px; height: 9px;
+  background: rgba(157,163,166,0.45); pointer-events: none; }
+.tmark-lbl { position: absolute; top: 7px; left: 50%; transform: translateX(-50%);
+  font-family: "20 Kopeek", monospace; font-size: 8px; letter-spacing: 0.02em;
+  color: var(--window); opacity: 0.55; white-space: nowrap; }
+/* маркеры замечаний на дорожке */
+.nmark { position: absolute; top: 50%; transform: translate(-50%, -50%); width: 9px; height: 9px;
+  border-radius: 50%; background: #6fb3e0; border: 1px solid #0b1116; cursor: pointer; z-index: 3;
+  box-shadow: 0 0 0 2px rgba(111,179,224,0.3); }
+.nmark:hover { background: #a9d4f5; box-shadow: 0 0 0 3px rgba(111,179,224,0.5); }
 .clock {
   flex-shrink: 0; font-family: "20 Kopeek", monospace; font-size: clamp(12px,1.3vh,18px);
   letter-spacing: 0.08em; color: var(--paper); opacity: 0.8; min-width: 7.5em; text-align: right;
