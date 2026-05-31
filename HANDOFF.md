@@ -68,6 +68,10 @@ https://github.com/trapastnik/24 (ветка `main`).
   тумблер «Тени от зданий» (вкл. по умолчанию) + «Сила теней». Правка живая.
 - **`renderer.preserveDrawingBuffer = true`** — чтобы кадры надёжно снимались (финальная
   поставка — видеофайл; иначе в фоновой вкладке canvas снимается чёрным).
+- **3D-вьюер объекта в техзоне** (`#tech-viewer` + `<iframe id="model-view">`): клик по зданию
+  на карте → raycast по `objGroup` (объекты помечены `userData.objKey`) → `postMessage({mtk24Model:key})`
+  в iframe; модель крутится под светом. Сам вьюер — `assets/models/_qa.html` (зона сессии моделей,
+  API `?key=&bg=&night=` + `postMessage`). Подпись объекта — `#tv-cap`.
 
 ## Осталось (зона сцены/UI)
 1. **Базовые звуки** — отдельный `audio.js` (свой файл): фон + холостой выстрел + щелчки,

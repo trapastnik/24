@@ -58,6 +58,18 @@
         <div class="tech-title" id="tech-title"></div>
         <dl class="tech-meta" id="tech-meta"></dl>
       </div>
+
+      <!-- 3D-ВЬЮЕР ОБЪЕКТА: по клику на здание на карте оно крутится здесь под светом.
+           Сам вьюер — _qa.html (зона сессии моделей), принимает ?key=<ключ из data/models.js>. -->
+      <section class="tech-viewer" id="tech-viewer">
+        <span class="tech-label">3D-модель · клик по зданию на карте</span>
+        <div class="tv-stage">
+          <iframe id="model-view" title="3D-модель объекта"
+            src="./assets/models/_qa.html?key=fortress&bg=0x12181e"></iframe>
+          <div class="tv-cap" id="tv-cap">Петропавловская крепость</div>
+        </div>
+      </section>
+
       <div class="tech-vo" id="tech-vo">
         <span class="tech-label">ГЗК · полный дикторский текст</span>
         <p id="vo-full"></p>

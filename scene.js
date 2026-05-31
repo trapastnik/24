@@ -278,6 +278,7 @@ function buildObjects() {
         c.material = c.material.clone(); c.material.transparent = true; c.castShadow = true;
         c.userData.emHex = c.material.emissive ? c.material.emissive.getHex() : 0;
         c.userData.emInt = c.material.emissiveIntensity ?? 1;
+        c.userData.objKey = key;                    // для клика-выбора (3D-вьюер)
       }});
       model.position.set(w.x, 0, w.z); objGroup.add(model);
       rec.mesh = model; rec.isModel = true; rec.pad = addForcePad(w, MODEL_CFG[key].size);
@@ -286,7 +287,7 @@ function buildObjects() {
       const fw = isBridge ? 2.0 : (hero ? 3.6 : 2.6), fh = isBridge ? 1.2 : (hero ? 7.0 : 4.2);
       const box = new THREE.Mesh(new THREE.BoxGeometry(fw, fh, fw),
         new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.15, transparent: true }));
-      box.castShadow = true; box.position.set(w.x, fh / 2, w.z); objGroup.add(box);
+      box.castShadow = true; box.userData.objKey = key; box.position.set(w.x, fh / 2, w.z); objGroup.add(box);
       rec.mesh = box; rec.isModel = false;
     }
     objects[key] = rec;
@@ -573,6 +574,7 @@ const hud = {
   ill: el("ill"), illImg: el("ill-img"), illCap: el("ill-cap"),
   fill: el("trackFill"), clock: el("clock"), track: el("track"), play: el("btnPlay"),
   evTime: el("ev-time"), evDate: el("ev-date"), voFull: el("vo-full"), flash: el("fx-flash"),
+  modelView: el("model-view"), tvCap: el("tv-cap"),
   techScene: el("tech-scene"), techTitle: el("tech-title"), techMeta: el("tech-meta"),
 };
 // номер кадра как в плане (Вступление / Кадр N / Финал)
@@ -699,6 +701,36 @@ window.addEventListener("keydown", (e) => {
   if (e.code === "Space") { e.preventDefault(); hud.play.click(); }
   else if (e.code === "ArrowRight") { const i = Math.min(SCN.shots.length - 1, shotIndexAt(t) + 1); t = SCN.shots[i].t0; curIdx = -1; }
   else if (e.code === "ArrowLeft") { const i = Math.max(0, shotIndexAt(t) - 1); t = SCN.shots[i].t0; curIdx = -1; }
+});
+
+// ----------------------------------------------------------------- 3D-вьюер объекта (клик по карте → _qa.html)
+const picker = new THREE.Raycaster();
+function pickKeyAt(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+  picker.setFromCamera(ndc, camera);
+  for (const h of picker.intersectObjects(objGroup.children, true)) {
+    let o = h.object;
+    while (o && o.userData.objKey == null) o = o.parent;
+    if (o && o.userData.objKey != null) return o.userData.objKey;
+  }
+  return null;
+}
+function showModel(key) {                            // переключаем модель в _qa.html без перезагрузки
+  if (!hud.modelView || !MODEL_CFG[key]) return;
+  const cw = hud.modelView.contentWindow;
+  if (cw) cw.postMessage({ mtk24Model: key }, "*");
+  const L = loc(key);
+  if (hud.tvCap) hud.tvCap.textContent = (L && L.name) ? L.name : key;
+}
+canvas.addEventListener("click", (e) => {
+  const key = pickKeyAt(e.clientX, e.clientY);
+  if (key && MODEL_CFG[key]) showModel(key);
+});
+canvas.addEventListener("mousemove", (e) => {
+  const key = pickKeyAt(e.clientX, e.clientY);
+  canvas.style.cursor = key && MODEL_CFG[key] ? "pointer" : "default";
 });
 
 // ----------------------------------------------------------------- working screen (размер ТЗ)
