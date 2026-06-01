@@ -104,6 +104,7 @@
     <button class="bg" data-p="bg-texture">подложка</button>
     <button class="bg" data-p="bg-vignette">виньетка</button>
     <button class="bg" data-p="bg-neva">Нева</button>
+    <button class="bg" data-p="bg-land">Нева⁻¹ (суша)</button>
     <button class="bg" data-p="bg-intro">заставка</button>
   </div>
   <div class="sep"></div>
@@ -168,6 +169,7 @@
     'bg-texture':'ФОН: полноэкранная петля под картой, blend screen + низкая прозрачность — карта и HUD читаются поверх.',
     'bg-vignette':'ФОН: кадр только по краям (radial-маска), центр с картой свободен — «дышащая» рамка.',
     'bg-neva':'ФОН: вода Невы ИЗ ПРОЕКТА (русло + риппл-шейдер) — на реальной реке рябит видео. Карта горизонтальна, тяни — орбита.',
+    'bg-land':'ФОН: инверсия «Невы» — видео на СУШЕ (карта минус русло), а Нева остаётся пустой картой. Тяни — орбита.',
     'bg-intro':'ФОН: полноэкранная заставка под титрами Вступления, затемнение по краям.',
     'ins-corner':'ВРЕЗКА: документальная карточка в углу с подписью и «киношной» рамкой — на время своего Кадра.',
     'ins-lower':'ВРЕЗКА: нижняя плашка у линии времени — кадр слева, дикторский текст справа.',
@@ -202,6 +204,17 @@
       var mountW=function(){ if(!window.MTK24Walls){ return setTimeout(mountW,80); }
         window.MTK24Walls.mountWater(cv, F.tint.presets[state.tint] || F.tint.presets[F.tint.default], clipFile); };
       mountW();
+    }
+    else if(p==='bg-land'){
+      map.style.display='none';
+      var roomL=document.createElement('div'); roomL.className='room';
+      var cvL=document.createElement('canvas'); roomL.appendChild(cvL);
+      var nbL=document.createElement('div'); nbL.className='nb'; nbL.textContent='инверсия Невы — видео на суше (город), река остаётся картой · тяни мышью — орбита'; roomL.appendChild(nbL);
+      ovl.appendChild(roomL);
+      var clipFileL=(F.clips.find(function(c){return c.id===state.clip;})||{}).file;
+      var mountL=function(){ if(!window.MTK24Walls){ return setTimeout(mountL,80); }
+        window.MTK24Walls.mountLand(cvL, F.tint.presets[state.tint] || F.tint.presets[F.tint.default], clipFileL); };
+      mountL();
     }
     else if(p==='bg-intro'){
       var w=document.createElement('div'); w.className='intro-wrap';
