@@ -12,6 +12,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { FootageFX } from "./assets/footage/footage-fx.js";   // видео-врезки из «Октября» (медиа-чат)
 
 // ----------------------------------------------------------------- palette
 const COL = {
@@ -697,6 +698,7 @@ const FX_Y = 1.6;                                   // эффекты чуть �
 const fxGroup = new THREE.Group(); scene.add(fxGroup);
 let fxItems = [];        // [{ update(lp, time) }]
 let fxFlashes = [];      // [{ lp, fired, color }]  — одноразовые полноэкранные вспышки
+let footageReady = false;   // FootageFX проинициализирован (видео-врезки активны)
 let flashEnergy = 0;     // затухающая «яркость» оверлея
 
 const easeOut = (t) => 1 - (1 - t) * (1 - t);
@@ -845,6 +847,7 @@ function buildFx(shot) {
   fxGroup.clear(); fxItems = []; fxFlashes = [];
   if (muzzleLight) muzzleLight.intensity = 0;          // Ф2: гасим вспышку при смене кадра
   if (window.MTK24_AUDIO) window.MTK24_AUDIO.radioOff();   // стоп радио при смене кадра (нет «хвоста»)
+  if (footageReady) FootageFX.beginShot();             // снять видео-врезки прошлого кадра
   for (const f of (shot.fx || [])) { const b = FX_BUILD[f.type]; if (b) b(f); }
 }
 function updateFx(lp, time) {
@@ -1042,6 +1045,7 @@ function tick(dt, snap) {
     _moonDir.set(-camera.position.x, Math.max(camera.position.y, 40), -camera.position.z).normalize();
     u.moonDir.value.copy(_moonDir); }
   updateClouds();                                                  // облака: дрейф + тинт по времени суток
+  if (footageReady) FootageFX.update(animT);                       // видео-врезки: рябь воды/камера
   hud.fill.style.width = (t / SCN.duration * 100) + "%";
   post.render(animT);
 }
@@ -1724,6 +1728,11 @@ function boot() {
   setupSunShadow();                                 // камера теней (карта сама принимает тени)
   ensureNightRig();                                 // Ф2: пул ночных источников + дульная вспышка
   updateLighting(s0.s0 ?? 720, 0, true);            // сразу выставить свет под 1-й кадр
+  // видео-врезки из «Октября»: контроллер + регистрация fx-типов (neva/walls/insert/background)
+  FootageFX.init({ scene, camera, renderer, dom: document.getElementById("fx-overlay"),
+    dir: "assets/footage/", world: { PW, PD, uvToWorld }, mapTexture: mapPlane && mapPlane.material.map });
+  ["neva", "walls", "insert", "background"].forEach((t) => { FX_BUILD[t] = (f) => FootageFX[t](f); });
+  footageReady = true;
   // когда .glb догрузятся — пересобираем объекты (модели вместо боксов)
   preloadModels().then(() => {
     buildObjects();

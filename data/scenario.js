@@ -55,6 +55,7 @@ window.MTK24_SCENARIO = {
       voFull: "Правительство приказывает развести мосты — отрезать рабочие районы от центра. 24 октября в течение всего дня отрядам Военно-революционного комитета удалось предотвратить разводку и взять под контроль Литейный, Троицкий, Гренадерский, Сампсониевский мосты. Юнкерам удаётся удержать только Николаевский мост и ненадолго Дворцовый.",
       illustration: null, illCaption: "Мосты Петрограда до 1917 года",
       focus: ["liteyny_br", "troitsky_br", "dvortsovy_br"], framing: "wide",
+      fx: [{ type: "insert", clip: "bridge_raising", style: "corner", tint: "vrkRed", at: 0.2 }],
       points: [
         { key: "liteyny_br", force: "pg", becomes: "red", at: 0.35 },
         { key: "troitsky_br", force: "pg", pulse: true, becomes: "red", at: 0.5 },
@@ -154,7 +155,7 @@ window.MTK24_SCENARIO = {
         { key: "aurora", force: "vrk", onNeva: true },
         { key: "winter", force: "pg", pulse: "fast" },
       ],
-      fx: [{ type: "shot", from: "aurora", signalFrom: "fortress", to: "winter", at: 0.42 }],
+      fx: [{ type: "neva", clip: "aurora_neva", tint: "vrkRed", at: 0.1 }, { type: "shot", from: "aurora", signalFrom: "fortress", to: "winter", at: 0.42 }],
       sfx: "shot",
     },
     {

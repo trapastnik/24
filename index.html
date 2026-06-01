@@ -17,6 +17,9 @@
       <!-- полноэкранная вспышка спецэффектов (вести, выстрел) — драйвится scene.js -->
       <div class="fx-flash" id="fx-flash" aria-hidden="true"></div>
 
+      <!-- слой видео-врезок (DOM поверх канваса: уголок/лайтбокс/фон-петля) — FootageFX -->
+      <div class="fx-overlay" id="fx-overlay" aria-hidden="true"></div>
+
       <header class="brand" aria-hidden="true">
         <div class="kicker">МТК №24 · музей В.И. Ленина</div>
         <h1>Ленин<br>в октябре</h1>
@@ -208,6 +211,7 @@
   <script src="./data/scenario.js"></script>
   <script src="./data/models.js"></script>
   <script src="./data/geo_register.js"></script>
+  <script src="./assets/footage/footage.js"></script><!-- каталог видео-врезок + пресеты тона (до scene.js) -->
   <script type="importmap">
   {
     "imports": {
