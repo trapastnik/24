@@ -1009,7 +1009,10 @@ function tick(dt, snap) {
     updateNightLights(sm, lp, animT, snap);     // Ф2: локальные источники (свет «живёт» в зданиях)
   }
   if (waterMesh) { const u = waterMat.uniforms; u.time.value = animT;   // Ф9: рябь/блик/луна воды
-    u.sunDir.value.copy(sun.position).normalize(); u.camPos.value.copy(camera.position); u.nightF.value = nightF; }
+    u.sunDir.value.copy(sun.position).normalize(); u.camPos.value.copy(camera.position); u.nightF.value = nightF;
+    // лунная дорожка наведена в кадр: зеркалим камеру по горизонтали → блик бежит к зрителю
+    _moonDir.set(-camera.position.x, Math.max(camera.position.y, 40), -camera.position.z).normalize();
+    u.moonDir.value.copy(_moonDir); }
   hud.fill.style.width = (t / SCN.duration * 100) + "%";
   post.render(animT);
 }
@@ -1362,6 +1365,7 @@ function rebuildCityMassing() {
 // Параметры воды вынесены в WATER (под настройщик; applyWaterSettings обновит uniforms после правки).
 const WATER = {
   base: 0x0a1622, sky: 0x33506e, sunCol: 0xfff0d0,           // глубина / отражение неба / цвет блика
+  moonCol: 0xbcd0ff, nightSky: 0.28,                         // холодный лунный блик / сила ночного отражения неба
   specStr: 1.6, fresnelBias: 0.16, rippleAmp: 0.06, nightGlow: 0.8, opacity: 0.9,
 };
 const waterMat = new THREE.ShaderMaterial({
@@ -1370,11 +1374,12 @@ const waterMat = new THREE.ShaderMaterial({
     time: { value: 0 }, sunDir: { value: new THREE.Vector3(0, 1, 0) }, camPos: { value: new THREE.Vector3() },
     nightF: { value: 0 },
     base: { value: new THREE.Color(WATER.base) }, sky: { value: new THREE.Color(WATER.sky) }, sunCol: { value: new THREE.Color(WATER.sunCol) },
+    moonDir: { value: new THREE.Vector3(0, 1, 0) }, moonCol: { value: new THREE.Color(WATER.moonCol) }, nightSky: { value: WATER.nightSky },
     specStr: { value: WATER.specStr }, fresBias: { value: WATER.fresnelBias }, ripple: { value: WATER.rippleAmp },
     nightGlow: { value: WATER.nightGlow }, opacity: { value: WATER.opacity },
   },
   vertexShader: `varying vec3 vW; void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vW = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
-  fragmentShader: `varying vec3 vW; uniform float time, nightF, specStr, fresBias, ripple, nightGlow, opacity; uniform vec3 sunDir, camPos, base, sky, sunCol;
+  fragmentShader: `varying vec3 vW; uniform float time, nightF, specStr, fresBias, ripple, nightGlow, opacity, nightSky; uniform vec3 sunDir, camPos, base, sky, sunCol, moonDir, moonCol;
     void main(){
       float nx = sin(vW.x*0.25 + time*0.6) + sin((vW.x+vW.z)*0.17 + time*0.8)*0.7;
       float nz = sin(vW.z*0.31 - time*0.5) + sin((vW.x-vW.z)*0.21 - time*0.7)*0.7;
@@ -1382,23 +1387,30 @@ const waterMat = new THREE.ShaderMaterial({
       vec3 view = normalize(camPos - vW);
       float fres = pow(1.0 - max(dot(nrm, view), 0.0), 3.0);
       float day = 1.0 - nightF;
-      // днём — тёмная вода + отражение неба (Френель); ночью отражение гаснет
-      vec3 col = mix(base, sky, clamp((fres + fresBias) * day, 0.0, 1.0));
-      // дневной солнечный блик
+      // отражение неба: днём — тёплое; ночью — тусклое холодное (вода не «мертва»)
+      vec3 reflCol = mix(sky * nightSky, sky, day);
+      vec3 col = mix(base, reflCol, clamp(fres + fresBias, 0.0, 1.0));
+      // солнечный блик — только днём (в 3 ночи Солнце немотивировано)
       vec3 sd = normalize(sunDir);
-      float spec = pow(max(dot(reflect(-sd, nrm), view), 0.0), 90.0) * max(sd.y, 0.0);
-      col += sunCol * spec * specStr;
-      // ночь: вода просто слегка светится — без бликов/дорожки/расцветки
+      float sunSpec = pow(max(dot(reflect(-sd, nrm), view), 0.0), 90.0) * max(sd.y, 0.0);
+      col += sunCol * sunSpec * specStr * day;
+      // лунный блик — ночью: холодный, чуть мягче, дорожка наведена в кадр (moonDir из scene.js)
+      vec3 md = normalize(moonDir);
+      float moonSpec = pow(max(dot(reflect(-md, nrm), view), 0.0), 60.0) * max(md.y, 0.0);
+      col += moonCol * moonSpec * specStr * 0.7 * nightF;
+      // мягкое ночное свечение глубины
       col += base * (nightGlow * nightF);
       gl_FragColor = vec4(col, opacity); }`,
 });
 function applyWaterSettings() {          // дёрнуть после правки WATER (для будущего настройщика)
   const u = waterMat.uniforms;
   u.base.value.set(WATER.base); u.sky.value.set(WATER.sky); u.sunCol.value.set(WATER.sunCol);
+  u.moonCol.value.set(WATER.moonCol); u.nightSky.value = WATER.nightSky;
   u.specStr.value = WATER.specStr; u.fresBias.value = WATER.fresnelBias; u.ripple.value = WATER.rippleAmp;
   u.nightGlow.value = WATER.nightGlow; u.opacity.value = WATER.opacity;
 }
 let waterMesh = null;
+const _moonDir = new THREE.Vector3();   // переиспользуемый вектор для лунной дорожки (tick)
 function buildWater() {
   if (waterMesh || !cityWater || !cityWater.length) return;
   // вода задана в [u,v] карты (extract_water_map.py) → uvToWorld ложит ПИКСЕЛЬ-В-ПИКСЕЛЬ
