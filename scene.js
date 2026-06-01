@@ -1041,6 +1041,8 @@ window.addEventListener("keydown", (e) => {
   else if (e.code === "ArrowRight") { const i = Math.min(SCN.shots.length - 1, shotIndexAt(t) + 1); t = SCN.shots[i].t0; curIdx = -1; }
   else if (e.code === "ArrowLeft") { const i = Math.max(0, shotIndexAt(t) - 1); t = SCN.shots[i].t0; curIdx = -1; }
   else if (e.code === "KeyP") { post.enabled = !post.enabled; syncPostUI(); }   // постпроцессинг вкл/выкл (статус — в техзоне)
+  else if (e.code === "KeyF") { e.preventDefault(); toggleClean(); }             // чистый кинокадр + fullscreen
+  else if (e.code === "Escape" && document.body.classList.contains("clean")) { setClean(false, true); }
 });
 
 // ----------------------------------------------------------------- оффлайн-рендер сегмента (макс. качество)
@@ -1225,10 +1227,13 @@ const WORK_ASPECT = 679 / 592;     // ≈1.147 — bbox точной формы 
 const TRANSPORT_H = 48;            // нижняя полоса таймлайна, px
 function resize() {
   // ГЗК (полный диктор-текст) — правая панель; таймлайн — снизу. Рабочий экран — слева.
-  const techW = Math.max(280, Math.min(460, window.innerWidth * 0.28));
+  // Чистый режим (body.clean): тех-панель и таймлайн скрыты, кинокадр на весь вьюпорт.
+  const clean = document.body.classList.contains("clean");
+  const techW = clean ? 0 : Math.max(280, Math.min(460, window.innerWidth * 0.28));
+  const transH = clean ? 0 : TRANSPORT_H;
   document.documentElement.style.setProperty("--techW", techW + "px");
-  document.documentElement.style.setProperty("--transportH", TRANSPORT_H + "px");
-  const availW = window.innerWidth - techW, availH = window.innerHeight - TRANSPORT_H;
+  document.documentElement.style.setProperty("--transportH", transH + "px");
+  const availW = window.innerWidth - techW, availH = window.innerHeight - transH;
   const wH = Math.min(availH, availW / WORK_ASPECT);
   const wW = wH * WORK_ASPECT;
   const work = document.getElementById("work");
@@ -1241,6 +1246,28 @@ function resize() {
   camera.aspect = wW / wH; camera.updateProjectionMatrix();
 }
 window.addEventListener("resize", resize);
+
+// ----------------------------------------------------------------- чистый режим (только кинокадр)
+// Прячет тех-панель и таймлайн, раскрывает рабочий экран на весь вьюпорт — то, что идёт в видео.
+// Клавиша F (или кнопка) — вкл/выкл + браузерный fullscreen; Esc — выход. ?render=1 / ?clean=1 —
+// сразу чистый кадр (без браузер-fullscreen) для Puppeteer-захвата страницы целиком.
+let cleanWantsFs = false;
+function setClean(on, useFs) {
+  document.body.classList.toggle("clean", on);
+  resize();
+  if (useFs) {
+    cleanWantsFs = on;
+    try {
+      if (on) { if (!document.fullscreenElement && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); }
+      else if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
+    } catch (e) { /* fullscreen может быть запрещён политикой — чистый режим всё равно сработал */ }
+  }
+}
+function toggleClean() { setClean(!document.body.classList.contains("clean"), true); }
+document.addEventListener("fullscreenchange", () => {   // вышли из браузер-fullscreen (Esc) → выходим и из чистого режима
+  if (!document.fullscreenElement && cleanWantsFs) { cleanWantsFs = false; setClean(false, false); }
+});
+window.MTK24_setClean = setClean;   // для внешнего управления (Puppeteer/консоль)
 
 // ----------------------------------------------------------------- controls panel (техзона)
 // статус постпроцессинга в техзоне (синхрон с клавишей P и тумблером)
@@ -1288,6 +1315,8 @@ function bindControls() {
   bindTabs();
   bindSoundControls();
   bindEditor();
+  const cleanBtn = $("clean-btn"); if (cleanBtn) cleanBtn.addEventListener("click", () => setClean(true, true));
+  const cleanExit = $("clean-exit"); if (cleanExit) cleanExit.addEventListener("click", () => setClean(false, true));
   renderEditor();
   syncPostUI();
 }
@@ -1675,4 +1704,6 @@ function boot() {
   requestAnimationFrame(frame);
   buildCityMassing();                               // Ф7: массинг города (async, после 1-го кадра)
   buildClouds();                                    // облака над городом (билборд-партиклы)
+  const qp = new URLSearchParams(location.search);  // ?render=1 / ?clean=1 — сразу чистый кадр (Puppeteer/превью)
+  if (qp.has("render") || qp.has("clean")) setClean(true, false);
 }

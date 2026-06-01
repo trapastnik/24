@@ -144,6 +144,7 @@
 
         <!-- ВКЛАДКА: СЦЕНА -->
         <div class="ctrl-panel" data-panel="scene">
+          <button type="button" class="ed-open" id="clean-btn">⛶ Полный экран — чистый кинокадр (F)</button>
           <label class="ctrl-switch"><input type="checkbox" id="cx-city" autocomplete="off"><span>3D-город (массинг)</span></label>
           <div class="ctrl-row"><label for="cx-citycut">Вырез у моделей</label>
             <b class="ctrl-val" id="cx-citycut-v">280 м</b><input type="range" id="cx-citycut" min="0" max="400" step="10" autocomplete="off"></div>
@@ -167,6 +168,9 @@
       <div class="clock" id="clock"><b>24 окт · --:--</b></div>
     </footer>
   </main>
+
+  <!-- кнопка выхода из чистого режима (видна только в body.clean) -->
+  <button type="button" id="clean-exit" aria-label="выйти из полного экрана">✕ выйти (Esc)</button>
 
   <!-- РЕДАКТОР СЦЕНАРИЯ (модальное окно, раскрывается из тех-панели). Сейчас — текст ГЗК + генерация
        озвучки; задел под будущий редактор событий/положений/движений камеры (вкладки ed-tabs). -->
