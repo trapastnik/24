@@ -4,6 +4,12 @@
 *.output
 node_modules/
 
+# --- Heavy SOURCE footage for media-cutting (kept locally; NEVER commit) ---
+# Исходный фильм «Октябрь» (Эйзенштейн, 1927) ~664 МБ — из него режем клипы.
+IN/*.webm
+IN/*.mp4
+IN/*.mkv
+
 # --- Heavy SOURCE media (kept locally; not needed to run the build) ---
 # 287 MB PSD and 115 MB PDF exceed GitHub's 100 MB limit; the 64 MB clean PNG
 # is the source for the committed web texture. Regeneration assets stay local.
