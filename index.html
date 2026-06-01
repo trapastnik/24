@@ -91,47 +91,71 @@
         </div>
       </div>
 
-      <!-- ПАНЕЛЬ ОСВЕЩЕНИЯ — тумблеры и настройки эффекта день/ночь и теней -->
-      <div class="tech-ctrls" id="tech-ctrls">
-        <span class="tech-label">Рендер</span>
-        <label class="ctrl-switch"><input type="checkbox" id="cx-post" autocomplete="off"><span>Постпроцессинг (P) · <b class="ctrl-val" id="cx-post-v">ВКЛ</b></span></label>
-        <span class="tech-label">Освещение сцены</span>
-        <label class="ctrl-switch"><input type="checkbox" id="cx-light" autocomplete="off"><span>Свет по времени суток</span></label>
-        <div class="ctrl-row"><label for="cx-sunh">Высота Солнца</label>
-          <b class="ctrl-val" id="cx-sunh-v">28°</b><input type="range" id="cx-sunh" min="8" max="70" step="1"></div>
-        <div class="ctrl-row"><label for="cx-contrast">Контраст день/ночь</label>
-          <b class="ctrl-val" id="cx-contrast-v">100%</b><input type="range" id="cx-contrast" min="0" max="100" step="1"></div>
-        <label class="ctrl-switch"><input type="checkbox" id="cx-shadow" autocomplete="off"><span>Тени от зданий</span></label>
-        <div class="ctrl-row"><label for="cx-shadowp">Сила теней</label>
-          <b class="ctrl-val" id="cx-shadowp-v">45%</b><input type="range" id="cx-shadowp" min="0" max="100" step="1"></div>
-        <label class="ctrl-switch"><input type="checkbox" id="cx-city" autocomplete="off"><span>3D-город (массинг)</span></label>
-        <div class="ctrl-row"><label for="cx-citycut">Вырез у моделей</label>
-          <b class="ctrl-val" id="cx-citycut-v">280 м</b><input type="range" id="cx-citycut" min="0" max="400" step="10" autocomplete="off"></div>
-        <label class="ctrl-switch"><input type="checkbox" id="cx-pads" autocomplete="off"><span>Круги под моделями</span></label>
-        <label class="ctrl-switch"><input type="checkbox" id="cx-freecam"><span>Свободная камера (зум/поворот)</span></label>
-        <label class="ctrl-switch"><input type="checkbox" id="cx-edit"><span>Правка объектов (двигать; мост — форма)</span></label>
+      <!-- ПАНЕЛЬ НАСТРОЕК — сворачиваемая, по вкладкам (Свет · Облака · Звук · Сцена) -->
+      <details class="tech-ctrls fold" id="tech-ctrls" open>
+        <summary class="tech-label">Настройки сцены</summary>
+        <div class="ctrl-tabs" id="ctrl-tabs">
+          <button type="button" class="ctrl-tab active" data-tab="light">Свет</button>
+          <button type="button" class="ctrl-tab" data-tab="clouds">Облака</button>
+          <button type="button" class="ctrl-tab" data-tab="sound">Звук</button>
+          <button type="button" class="ctrl-tab" data-tab="scene">Сцена</button>
+        </div>
 
-        <span class="tech-label" style="margin-top:10px">Облака над городом</span>
-        <label class="ctrl-switch"><input type="checkbox" id="cx-clouds" autocomplete="off"><span>Облака</span></label>
-        <div class="ctrl-row"><label for="cx-cloud-count">Количество (пасмурно →)</label>
-          <b class="ctrl-val" id="cx-cloud-count-v">6</b><input type="range" id="cx-cloud-count" min="0" max="54" step="1" autocomplete="off"></div>
-        <div class="ctrl-row"><label for="cx-cloud-op">Прозрачность (дальних)</label>
-          <b class="ctrl-val" id="cx-cloud-op-v">34%</b><input type="range" id="cx-cloud-op" min="0" max="100" step="1" autocomplete="off"></div>
-        <div class="ctrl-row"><label for="cx-cloud-fnear">Фейд: ближе → прозрачнее</label>
-          <b class="ctrl-val" id="cx-cloud-fnear-v">35 ед</b><input type="range" id="cx-cloud-fnear" min="0" max="160" step="5" autocomplete="off"></div>
-        <div class="ctrl-row"><label for="cx-cloud-ffar">Фейд: дальше → плотнее</label>
-          <b class="ctrl-val" id="cx-cloud-ffar-v">145 ед</b><input type="range" id="cx-cloud-ffar" min="40" max="320" step="5" autocomplete="off"></div>
-        <div class="ctrl-row"><label for="cx-cloud-h">Высота над городом</label>
-          <b class="ctrl-val" id="cx-cloud-h-v">27 ед</b><input type="range" id="cx-cloud-h" min="14" max="55" step="1" autocomplete="off"></div>
-        <div class="ctrl-row"><label>Цвет: день / ночь</label>
-          <input type="color" id="cx-cloud-day" title="цвет облаков днём" style="width:30px;height:22px;padding:0;border:1px solid #38424f;border-radius:5px;background:none;cursor:pointer">
-          <input type="color" id="cx-cloud-night" title="цвет облаков ночью" style="width:30px;height:22px;padding:0;border:1px solid #38424f;border-radius:5px;background:none;cursor:pointer"></div>
+        <!-- ВКЛАДКА: СВЕТ -->
+        <div class="ctrl-panel active" data-panel="light">
+          <label class="ctrl-switch"><input type="checkbox" id="cx-post" autocomplete="off"><span>Постпроцессинг (P) · <b class="ctrl-val" id="cx-post-v">ВКЛ</b></span></label>
+          <label class="ctrl-switch"><input type="checkbox" id="cx-light" autocomplete="off"><span>Свет по времени суток</span></label>
+          <div class="ctrl-row"><label for="cx-sunh">Высота Солнца</label>
+            <b class="ctrl-val" id="cx-sunh-v">28°</b><input type="range" id="cx-sunh" min="8" max="70" step="1"></div>
+          <div class="ctrl-row"><label for="cx-contrast">Контраст день/ночь</label>
+            <b class="ctrl-val" id="cx-contrast-v">100%</b><input type="range" id="cx-contrast" min="0" max="100" step="1"></div>
+          <label class="ctrl-switch"><input type="checkbox" id="cx-shadow" autocomplete="off"><span>Тени от зданий</span></label>
+          <div class="ctrl-row"><label for="cx-shadowp">Сила теней</label>
+            <b class="ctrl-val" id="cx-shadowp-v">45%</b><input type="range" id="cx-shadowp" min="0" max="100" step="1"></div>
+        </div>
 
-        <div class="bt-readout" id="bt-readout"></div>
-        <span class="tech-label" style="margin-top:10px">Инструменты</span>
-        <a class="tech-tool" href="tools/water_trace.html" target="_blank" rel="noopener"
-           style="display:block;padding:7px 9px;margin-top:4px;border:1px solid #38424f;border-radius:7px;color:#9fd2ea;text-decoration:none;font-size:12px;background:#1a2230">🌊 Обводка воды по карте →</a>
-      </div>
+        <!-- ВКЛАДКА: ОБЛАКА -->
+        <div class="ctrl-panel" data-panel="clouds">
+          <label class="ctrl-switch"><input type="checkbox" id="cx-clouds" autocomplete="off"><span>Облака над городом</span></label>
+          <div class="ctrl-row"><label for="cx-cloud-count">Количество (пасмурно →)</label>
+            <b class="ctrl-val" id="cx-cloud-count-v">6</b><input type="range" id="cx-cloud-count" min="0" max="54" step="1" autocomplete="off"></div>
+          <div class="ctrl-row"><label for="cx-cloud-op">Прозрачность (дальних)</label>
+            <b class="ctrl-val" id="cx-cloud-op-v">34%</b><input type="range" id="cx-cloud-op" min="0" max="100" step="1" autocomplete="off"></div>
+          <div class="ctrl-row"><label for="cx-cloud-fnear">Фейд: ближе → прозрачнее</label>
+            <b class="ctrl-val" id="cx-cloud-fnear-v">35 ед</b><input type="range" id="cx-cloud-fnear" min="0" max="160" step="5" autocomplete="off"></div>
+          <div class="ctrl-row"><label for="cx-cloud-ffar">Фейд: дальше → плотнее</label>
+            <b class="ctrl-val" id="cx-cloud-ffar-v">145 ед</b><input type="range" id="cx-cloud-ffar" min="40" max="320" step="5" autocomplete="off"></div>
+          <div class="ctrl-row"><label for="cx-cloud-h">Высота над городом</label>
+            <b class="ctrl-val" id="cx-cloud-h-v">27 ед</b><input type="range" id="cx-cloud-h" min="14" max="55" step="1" autocomplete="off"></div>
+          <div class="ctrl-row"><label>Цвет: день / ночь</label>
+            <input type="color" id="cx-cloud-day" title="цвет облаков днём" style="width:30px;height:22px;padding:0;border:1px solid #38424f;border-radius:5px;background:none;cursor:pointer">
+            <input type="color" id="cx-cloud-night" title="цвет облаков ночью" style="width:30px;height:22px;padding:0;border:1px solid #38424f;border-radius:5px;background:none;cursor:pointer"></div>
+        </div>
+
+        <!-- ВКЛАДКА: ЗВУК -->
+        <div class="ctrl-panel" data-panel="sound">
+          <label class="ctrl-switch"><input type="checkbox" id="cx-vo" autocomplete="off" checked><span>Озвучка ГЗК (диктор)</span></label>
+          <div class="ctrl-row"><label for="cx-vol">Общая громкость</label>
+            <b class="ctrl-val" id="cx-vol-v">85%</b><input type="range" id="cx-vol" min="0" max="100" step="1" autocomplete="off"></div>
+          <div class="ctrl-row"><label for="cx-bedvol">Громкость фона</label>
+            <b class="ctrl-val" id="cx-bedvol-v">100%</b><input type="range" id="cx-bedvol" min="0" max="100" step="1" autocomplete="off"></div>
+          <div class="bt-readout">Текст диктора — поле <b>voFull</b> в <b>data/scenario.js</b>.
+            Перегенерация: <b>node tools/make_vo.mjs</b> → перезагрузить страницу.</div>
+        </div>
+
+        <!-- ВКЛАДКА: СЦЕНА -->
+        <div class="ctrl-panel" data-panel="scene">
+          <label class="ctrl-switch"><input type="checkbox" id="cx-city" autocomplete="off"><span>3D-город (массинг)</span></label>
+          <div class="ctrl-row"><label for="cx-citycut">Вырез у моделей</label>
+            <b class="ctrl-val" id="cx-citycut-v">280 м</b><input type="range" id="cx-citycut" min="0" max="400" step="10" autocomplete="off"></div>
+          <label class="ctrl-switch"><input type="checkbox" id="cx-pads" autocomplete="off"><span>Круги под моделями</span></label>
+          <label class="ctrl-switch"><input type="checkbox" id="cx-freecam"><span>Свободная камера (зум/поворот)</span></label>
+          <label class="ctrl-switch"><input type="checkbox" id="cx-edit"><span>Правка объектов (двигать; мост — форма)</span></label>
+          <div class="bt-readout" id="bt-readout"></div>
+          <a class="tech-tool" href="tools/water_trace.html" target="_blank" rel="noopener"
+             style="display:block;padding:7px 9px;margin-top:4px;border:1px solid #38424f;border-radius:7px;color:#9fd2ea;text-decoration:none;font-size:12px;background:#1a2230">🌊 Обводка воды по карте →</a>
+        </div>
+      </details>
     </aside>
 
     <!-- таймлайн событий — нижняя полоса под рабочим экраном -->

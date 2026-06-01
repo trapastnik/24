@@ -26,6 +26,7 @@
   let ctx = null, master = null, bedBus = null, started = false, playing = true, night = 0;
   let windGain = null, crowdGain = null, radioSrc = null, stepsSrc = null;
   let voSrc = null, voGain = null, voToken = 0;     // дикторская озвучка ГЗК (текущий кадр)
+  let vol = 0.85, bedVol = 1, voEnabled = true, voDucked = false;   // громкости (вкладка «Звук»)
   const buf = {};                                   // декодированные сэмплы (или undefined → синтез)
   const VO_COUNT = 11;                              // assets/audio/vo_01..11.mp3 — ГЗК по кадрам (build-time say-Milena)
   const voBuf = [];                                 // декодированная озвучка по индексу кадра
@@ -111,9 +112,12 @@
     }
     if (ctx.state === "suspended") ctx.resume();
     started = true;
-    master.gain.linearRampToValueAtTime(playing ? 0.85 : 0.0, ctx.currentTime + 0.8);
+    master.gain.linearRampToValueAtTime(playing ? vol : 0.0, ctx.currentTime + 0.8);
   }
-  function setPlaying(b) { playing = b; if (ctx && started) master.gain.linearRampToValueAtTime(b ? 0.85 : 0.0, ctx.currentTime + 0.3); }
+  function setPlaying(b) { playing = b; if (ctx && started) master.gain.linearRampToValueAtTime(b ? vol : 0.0, ctx.currentTime + 0.3); }
+  function setMasterVol(v) { vol = Math.max(0, Math.min(1, v)); if (ctx && started && playing) master.gain.linearRampToValueAtTime(vol, ctx.currentTime + 0.2); }
+  function setBedVol(v) { bedVol = Math.max(0, Math.min(1, v)); if (bedBus && ctx) bedBus.gain.linearRampToValueAtTime((voDucked ? DUCK : 1) * bedVol, ctx.currentTime + 0.2); }
+  function setVoEnabled(b) { voEnabled = !!b; if (!b && voSrc) { try { voSrc.onended = null; voSrc.stop(); } catch (e) {} voSrc = null; setVoDuck(false); } }
   function setNight(nf) { night = nf; if (windGain) windGain.gain.value = (buf.wind ? 0.4 : 0.04) + (buf.wind ? 0.3 : 0.05) * nf; }
   function fx(type) {
     if (!ctx || !started) return;
@@ -130,10 +134,11 @@
   }
 
   // дикторская озвучка ГЗК: голос кадра index → играет, фон приглушается (duck); смена кадра обрывает прошлый голос (без наложения)
-  function setVoDuck(on) { if (bedBus && ctx) bedBus.gain.linearRampToValueAtTime(on ? DUCK : 1.0, ctx.currentTime + 0.4); }
+  function setVoDuck(on) { voDucked = on; if (bedBus && ctx) bedBus.gain.linearRampToValueAtTime((on ? DUCK : 1) * bedVol, ctx.currentTime + 0.4); }
   function vo(index) {
     if (!ctx || !started) return;
     if (voSrc) { try { voSrc.onended = null; voSrc.stop(); } catch (e) {} voSrc = null; }
+    if (!voEnabled) { setVoDuck(false); return; }    // озвучка выключена (вкладка «Звук»)
     const b = voBuf[index];
     if (!b) { setVoDuck(false); return; }            // на этот кадр нет файла → фон не приглушаем
     voGain = ctx.createGain(); voGain.gain.value = 1.0; voGain.connect(master);
@@ -144,7 +149,7 @@
     setVoDuck(true);
   }
 
-  window.MTK24_AUDIO = { resume, setPlaying, setNight, fx, shot, vo, radioOn, radioOff, stepsOn, stepsOff };
+  window.MTK24_AUDIO = { resume, setPlaying, setMasterVol, setBedVol, setVoEnabled, setNight, fx, shot, vo, radioOn, radioOff, stepsOn, stepsOff };
   // АВТО-СТАРТ: создаём контекст и грузим сэмплы сразу (прелоад). Реальное звучание включается
   // автоматически при первом же взаимодействии/возврате фокуса (политику автоплея Safari иначе не обойти),
   // и срабатывает мгновенно, т.к. всё уже загружено. resume() идемпотентен.

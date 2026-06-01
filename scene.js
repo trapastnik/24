@@ -1285,6 +1285,8 @@ function bindControls() {
   if (freecam) { freecam.checked = FX_SET.freeCam;
     freecam.addEventListener("change", () => setFreeCam(freecam.checked)); }
   bindCloudControls();
+  bindTabs();
+  bindSoundControls();
   renderEditor();
   syncPostUI();
 }
@@ -1579,6 +1581,31 @@ function bindCloudControls() {
   const cd = $("cx-cloud-day"), cn = $("cx-cloud-night");
   if (cd) { cd.value = hex6(CLOUDS.dayCol); cd.addEventListener("input", () => { CLOUDS.dayCol = parseInt(cd.value.slice(1), 16); applyCloudSettings(); }); }
   if (cn) { cn.value = hex6(CLOUDS.nightCol); cn.addEventListener("input", () => { CLOUDS.nightCol = parseInt(cn.value.slice(1), 16); applyCloudSettings(); }); }
+}
+// вкладки настроек: клик по чипу → показать соответствующую панель
+function bindTabs() {
+  const tabs = [...document.querySelectorAll("#ctrl-tabs .ctrl-tab")];
+  const panels = [...document.querySelectorAll("#tech-ctrls .ctrl-panel")];
+  if (!tabs.length) return;
+  tabs.forEach((t) => t.addEventListener("click", () => {
+    const name = t.dataset.tab;
+    tabs.forEach((x) => x.classList.toggle("active", x === t));
+    panels.forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
+  }));
+}
+// вкладка «Звук»: озвучка ГЗК вкл/выкл, общая громкость, громкость фона (→ audio.js)
+function bindSoundControls() {
+  const $ = (id) => document.getElementById(id);
+  const A = () => window.MTK24_AUDIO;
+  const vo = $("cx-vo");
+  if (vo) vo.addEventListener("change", () => { if (A() && A().setVoEnabled) A().setVoEnabled(vo.checked); });
+  const bindVol = (id, def, fn) => {
+    const el = $(id), v = $(id + "-v"); if (!el) return;
+    el.value = def; v.textContent = def + "%";                 // дефолты под audio.js (vol 0.85, bedVol 1)
+    el.addEventListener("input", () => { v.textContent = el.value + "%"; if (A() && A()[fn]) A()[fn](+el.value / 100); });
+  };
+  bindVol("cx-vol", 85, "setMasterVol");
+  bindVol("cx-bedvol", 100, "setBedVol");
 }
 
 // ----------------------------------------------------------------- boot
