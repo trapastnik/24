@@ -139,8 +139,7 @@
             <b class="ctrl-val" id="cx-vol-v">85%</b><input type="range" id="cx-vol" min="0" max="100" step="1" autocomplete="off"></div>
           <div class="ctrl-row"><label for="cx-bedvol">Громкость фона</label>
             <b class="ctrl-val" id="cx-bedvol-v">100%</b><input type="range" id="cx-bedvol" min="0" max="100" step="1" autocomplete="off"></div>
-          <div class="bt-readout">Текст диктора — поле <b>voFull</b> в <b>data/scenario.js</b>.
-            Перегенерация: <b>node tools/make_vo.mjs</b> → перезагрузить страницу.</div>
+          <button type="button" class="ed-open" id="ed-open">✎ Редактор текста ГЗК →</button>
         </div>
 
         <!-- ВКЛАДКА: СЦЕНА -->
@@ -168,6 +167,30 @@
       <div class="clock" id="clock"><b>24 окт · --:--</b></div>
     </footer>
   </main>
+
+  <!-- РЕДАКТОР СЦЕНАРИЯ (модальное окно, раскрывается из тех-панели). Сейчас — текст ГЗК + генерация
+       озвучки; задел под будущий редактор событий/положений/движений камеры (вкладки ed-tabs). -->
+  <div class="editor-overlay" id="gzk-editor" hidden>
+    <div class="editor-win">
+      <div class="editor-head">
+        <span class="editor-title">Редактор сценария · <b>текст ГЗК</b></span>
+        <button type="button" class="editor-x" id="ed-close" aria-label="закрыть">✕</button>
+      </div>
+      <div class="editor-body">
+        <div class="ed-toprow">
+          <label>Кадр <select id="ed-scene"></select></label>
+          <span class="ed-meta" id="ed-meta"></span>
+        </div>
+        <textarea id="ed-text" spellcheck="false" placeholder="Полный дикторский текст кадра (поле voFull)…"></textarea>
+        <div class="ed-actions">
+          <button type="button" class="ed-btn" id="ed-save">💾 Сохранить текст</button>
+          <span class="ed-rate">темп <input type="number" id="ed-rate" value="178" min="120" max="240" step="2"> сл/мин</span>
+          <button type="button" class="ed-btn ed-btn-go" id="ed-gen">🔊 Сгенерировать озвучку</button>
+        </div>
+        <div class="ed-status" id="ed-status">Правка пишется в <b>data/scenario.js</b> (поле voFull). Генерация — локально (нужен мак: say + ffmpeg).</div>
+      </div>
+    </div>
+  </div>
 
   <script src="./data/locations.js"></script>
   <script src="./data/streets.js"></script>

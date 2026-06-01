@@ -1287,6 +1287,7 @@ function bindControls() {
   bindCloudControls();
   bindTabs();
   bindSoundControls();
+  bindEditor();
   renderEditor();
   syncPostUI();
 }
@@ -1606,6 +1607,54 @@ function bindSoundControls() {
   };
   bindVol("cx-vol", 85, "setMasterVol");
   bindVol("cx-bedvol", 100, "setBedVol");
+}
+// редактор сценария (модалка): правка voFull кадра → сохранение в scenario.js → генерация озвучки.
+// Фундамент будущего редактора (события/положения/камера): сюда добавляются поля/вкладки.
+function bindEditor() {
+  const $ = (id) => document.getElementById(id);
+  const ov = $("gzk-editor"), sel = $("ed-scene"), ta = $("ed-text"), meta = $("ed-meta"),
+        status = $("ed-status"), rate = $("ed-rate"),
+        openBtn = $("ed-open"), closeBtn = $("ed-close"), saveBtn = $("ed-save"), genBtn = $("ed-gen");
+  if (!ov || !sel) return;
+  sel.innerHTML = SCN.shots.map((s, i) => `<option value="${i}">${i + 1} · ${esc(s.title || s.id)}</option>`).join("");
+  const loadScene = (i) => { const s = SCN.shots[i]; if (!s) return; ta.value = s.voFull || ""; meta.textContent = `id: ${s.id} · окно ${s.t1 - s.t0} с`; };
+  const open = () => { const i = Math.max(0, curIdx); sel.value = i; loadScene(i); ov.hidden = false; ta.focus(); };
+  const close = () => { ov.hidden = true; };
+  if (openBtn) openBtn.addEventListener("click", open);
+  if (closeBtn) closeBtn.addEventListener("click", close);
+  ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+  window.addEventListener("keydown", (e) => { if (e.code === "Escape" && !ov.hidden) close(); });
+  sel.addEventListener("change", () => loadScene(+sel.value));
+  const setBusy = (b) => { saveBtn.disabled = genBtn.disabled = b; };
+  async function save() {
+    const i = +sel.value, s = SCN.shots[i]; if (!s) return false;
+    setBusy(true); status.textContent = "Сохранение…";
+    try {
+      const r = await fetch("/api/scenario-set", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: s.id, field: "voFull", value: ta.value }) });
+      if (!r.ok) throw new Error((await r.text()) || r.status);
+      s.voFull = ta.value;                                              // обновить в памяти сцены
+      if (i === curIdx) hud.voFull.textContent = s.voFull || s.narration || "";   // обновить панель ГЗК
+      status.textContent = "✓ Сохранено в data/scenario.js (кадр «" + (s.title || s.id) + "»).";
+      return true;
+    } catch (e) { status.textContent = "�— Ошибка сохранения: " + e.message; return false; }
+    finally { setBusy(false); }
+  }
+  if (saveBtn) saveBtn.addEventListener("click", save);
+  if (genBtn) genBtn.addEventListener("click", async () => {
+    if (!(await save())) return;                                       // сперва сохранить текущий текст
+    setBusy(true); status.textContent = "Генерация озвучки (Milena → mp3)… ~10–25 с, ждём.";
+    try {
+      const r = await fetch("/api/make-vo?rate=" + encodeURIComponent(rate.value || 178), { method: "POST" });
+      const out = (await r.text()).trim();
+      status.textContent = out;
+      if (r.ok && window.MTK24_AUDIO && window.MTK24_AUDIO.reloadVo) {
+        await window.MTK24_AUDIO.reloadVo();
+        status.textContent += "\n✓ Озвучка перегенерирована и перечитана — слушай в плеере.";
+      }
+    } catch (e) { status.textContent = "�— Ошибка генерации: " + e.message; }
+    finally { setBusy(false); }
+  });
 }
 
 // ----------------------------------------------------------------- boot

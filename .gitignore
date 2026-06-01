@@ -16,8 +16,10 @@ in/Кадр9_интерьер Зимнего дв 17г/
 assets/map/petrograd_5000.png
 
 # runtime backup from edit_server
-data/locations.js.bak
-data/streets.js.bak
+data/*.bak
+
+# python bytecode cache (edit_server)
+__pycache__/
 
 # offline render output (PNG frames → ffmpeg)
 render/

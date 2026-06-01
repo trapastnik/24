@@ -8,7 +8,7 @@
           python3 tools/edit_server.py 8130       # свой порт
 Открыть:  http://localhost:8125/tools/authoring.html  → правишь → «💾 сохранить»
 """
-import http.server, os, sys, shutil, re, urllib.parse
+import http.server, os, sys, shutil, re, urllib.parse, json, subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGETS = {
@@ -17,6 +17,9 @@ TARGETS = {
     "/api/save-water":     (os.path.join(ROOT, "data", "petrograd_water_map.json"), "\"water\""),  # обводка воды (tools/water_trace.html)
 }
 RENDER_DIR = os.path.join(ROOT, "render")          # сюда кладём PNG-кадры оффлайн-рендера
+SCENARIO = os.path.join(ROOT, "data", "scenario.js")   # точечный патч полей кадров (редактор сценария)
+# поля кадра, разрешённые к правке из встроенного редактора (строковые)
+EDIT_FIELDS = {"voFull", "narration", "title", "date", "quote", "cite", "illCaption"}
 SAFE = re.compile(r"^[A-Za-z0-9._-]+$")            # безопасные имена (без path traversal)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8125
 
@@ -37,6 +40,55 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204); self._cors(); self.end_headers()
 
+    def _reject(self, msg=b"rejected", code=400):
+        self.send_response(code); self._cors(); self.end_headers(); self.wfile.write(msg)
+
+    # точечно патчит строковое поле кадра в data/scenario.js (по id), сохраняя формат/комментарии.
+    # тело JSON: { id, field, value }. Фундамент встроенного редактора сценария.
+    def _scenario_set(self):
+        n = int(self.headers.get("Content-Length", 0))
+        if not (0 < n <= 1_000_000):
+            return self._reject()
+        try:
+            data = json.loads(self.rfile.read(n).decode("utf-8"))
+            sid, field, value = str(data["id"]), str(data["field"]), str(data["value"])
+        except Exception:
+            return self._reject()
+        if field not in EDIT_FIELDS or not re.match(r"^[A-Za-z0-9_]+$", sid):
+            return self._reject(b"bad id/field")
+        text = open(SCENARIO, encoding="utf-8").read()
+        m = re.search(r'id:\s*"' + re.escape(sid) + r'"', text)
+        if not m:
+            return self._reject(b"id not found", 404)
+        fm = re.search(field + r'\s*:\s*"((?:[^"\\]|\\.)*)"', text[m.end():])
+        if not fm:
+            return self._reject(b"field not found", 404)
+        s, e = m.end() + fm.start(1), m.end() + fm.end(1)
+        esc = json.dumps(value, ensure_ascii=False)[1:-1]      # экранируем как содержимое JS-строки
+        shutil.copyfile(SCENARIO, SCENARIO + ".bak")
+        with open(SCENARIO, "w", encoding="utf-8") as f:
+            f.write(text[:s] + esc + text[e:])
+        self.send_response(200); self._cors(); self.end_headers(); self.wfile.write(b"ok")
+        print(f"[scenario] {sid}.{field} ← {len(value)} симв.")
+
+    # запускает генератор озвучки (node tools/make_vo.mjs [rate]) и возвращает его вывод.
+    # ЛОКАЛЬНЫЙ dev-инструмент: команда фиксирована, rate — только цифры.
+    def _make_vo(self, query):
+        rate = urllib.parse.parse_qs(query).get("rate", ["178"])[0]
+        if not re.match(r"^\d{2,3}$", rate):
+            rate = "178"
+        try:
+            r = subprocess.run(["node", "tools/make_vo.mjs", rate], cwd=ROOT,
+                               capture_output=True, text=True, timeout=300)
+            out, ok = (r.stdout + r.stderr), (r.returncode == 0)
+        except Exception as ex:
+            out, ok = str(ex), False
+        body = out[-6000:].encode("utf-8")
+        self.send_response(200 if ok else 500); self._cors()
+        self.send_header("Content-Type", "text/plain; charset=utf-8"); self.end_headers()
+        self.wfile.write(body)
+        print(f"[make-vo] rate={rate} ok={ok}")
+
     def _save_frame(self, query):
         q = urllib.parse.parse_qs(query)
         run = q.get("run", ["seg"])[0]; name = q.get("name", [""])[0]
@@ -56,6 +108,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         if parsed.path == "/api/render-frame":
             return self._save_frame(parsed.query)
+        if parsed.path == "/api/scenario-set":
+            return self._scenario_set()
+        if parsed.path == "/api/make-vo":
+            return self._make_vo(parsed.query)
         tgt = TARGETS.get(parsed.path)
         if not tgt:
             self.send_response(404); self._cors(); self.end_headers(); return
@@ -80,4 +136,6 @@ if __name__ == "__main__":
     for ep, (p, _) in TARGETS.items():
         print(f"  POST {ep} → {os.path.relpath(p, ROOT)}")
     print(f"  POST /api/render-frame → {os.path.relpath(RENDER_DIR, ROOT)}/<run>/frame_*.png  (оффлайн-рендер)")
+    print(f"  POST /api/scenario-set → data/scenario.js (патч поля кадра: id/field/value)")
+    print(f"  POST /api/make-vo      → node tools/make_vo.mjs [rate] (генерация озвучки ГЗК)")
     http.server.ThreadingHTTPServer(("", PORT), Handler).serve_forever()

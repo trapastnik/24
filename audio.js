@@ -44,9 +44,14 @@
       try { const r = await fetch(url); if (!r.ok) return; buf[k] = await ctx.decodeAudioData(await r.arrayBuffer()); }
       catch (e) { /* нет файла → синтез-фолбэк */ }
     }));
-    await Promise.all(Array.from({ length: VO_COUNT }, (_, i) => i).map(async (i) => {   // дикторская озвучка ГЗК по кадрам
+    await loadVo();
+  }
+  async function loadVo() {                          // дикторская озвучка ГЗК по кадрам (с обходом кэша — после перегенерации)
+    if (!ctx) return;
+    const bust = "?v=" + Date.now();
+    await Promise.all(Array.from({ length: VO_COUNT }, (_, i) => i).map(async (i) => {
       const nn = String(i + 1).padStart(2, "0");
-      try { const r = await fetch(`./assets/audio/vo_${nn}.mp3`); if (!r.ok) return; voBuf[i] = await ctx.decodeAudioData(await r.arrayBuffer()); }
+      try { const r = await fetch(`./assets/audio/vo_${nn}.mp3` + bust); if (!r.ok) return; voBuf[i] = await ctx.decodeAudioData(await r.arrayBuffer()); }
       catch (e) { /* нет файла → кадр без озвучки */ }
     }));
   }
@@ -149,7 +154,8 @@
     setVoDuck(true);
   }
 
-  window.MTK24_AUDIO = { resume, setPlaying, setMasterVol, setBedVol, setVoEnabled, setNight, fx, shot, vo, radioOn, radioOff, stepsOn, stepsOff };
+  function reloadVo() { return loadVo(); }           // перечитать озвучку после перегенерации (редактор ГЗК)
+  window.MTK24_AUDIO = { resume, setPlaying, setMasterVol, setBedVol, setVoEnabled, setNight, fx, shot, vo, reloadVo, radioOn, radioOff, stepsOn, stepsOff };
   // АВТО-СТАРТ: создаём контекст и грузим сэмплы сразу (прелоад). Реальное звучание включается
   // автоматически при первом же взаимодействии/возврате фокуса (политику автоплея Safari иначе не обойти),
   // и срабатывает мгновенно, т.к. всё уже загружено. resume() идемпотентен.
