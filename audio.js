@@ -23,15 +23,19 @@
     boom: "./assets/audio/boom.mp3", telegraph: "./assets/audio/telegraph.mp3",
     footsteps: "./assets/audio/footsteps.mp3",        // петля: шаги Ленина на маршруте к Смольному
   };
-  let ctx = null, master = null, started = false, playing = true, night = 0;
+  let ctx = null, master = null, bedBus = null, started = false, playing = true, night = 0;
   let windGain = null, crowdGain = null, radioSrc = null, stepsSrc = null;
+  let voSrc = null, voGain = null, voToken = 0;     // дикторская озвучка ГЗК (текущий кадр)
   const buf = {};                                   // декодированные сэмплы (или undefined → синтез)
+  const VO_COUNT = 11;                              // assets/audio/vo_01..11.mp3 — ГЗК по кадрам (build-time say-Milena)
+  const voBuf = [];                                 // декодированная озвучка по индексу кадра
+  const DUCK = 0.32;                                // во сколько приглушаем фон под голос
 
   function noiseBuffer(sec) {
     const b = ctx.createBuffer(1, Math.floor(ctx.sampleRate * sec), ctx.sampleRate);
     const d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return b;
   }
-  function loopBuf(b, g) { const s = ctx.createBufferSource(); s.buffer = b; s.loop = true; const gn = ctx.createGain(); gn.gain.value = g; s.connect(gn); gn.connect(master); s.start(); return gn; }
+  function loopBuf(b, g, dest) { const s = ctx.createBufferSource(); s.buffer = b; s.loop = true; const gn = ctx.createGain(); gn.gain.value = g; s.connect(gn); gn.connect(dest || master); s.start(); return gn; }
   function playBuf(b, g) { const s = ctx.createBufferSource(); s.buffer = b; const gn = ctx.createGain(); gn.gain.value = g == null ? 1 : g; s.connect(gn); gn.connect(master); s.start(); }
 
   async function loadSamples() {
@@ -39,13 +43,18 @@
       try { const r = await fetch(url); if (!r.ok) return; buf[k] = await ctx.decodeAudioData(await r.arrayBuffer()); }
       catch (e) { /* нет файла → синтез-фолбэк */ }
     }));
+    await Promise.all(Array.from({ length: VO_COUNT }, (_, i) => i).map(async (i) => {   // дикторская озвучка ГЗК по кадрам
+      const nn = String(i + 1).padStart(2, "0");
+      try { const r = await fetch(`./assets/audio/vo_${nn}.mp3`); if (!r.ok) return; voBuf[i] = await ctx.decodeAudioData(await r.arrayBuffer()); }
+      catch (e) { /* нет файла → кадр без озвучки */ }
+    }));
   }
 
   // ---- синтез-фолбэки (если сэмпла нет) ----
   function synthWind() {
     const wn = ctx.createBufferSource(); wn.buffer = noiseBuffer(6); wn.loop = true;
     const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 130;
-    const g = ctx.createGain(); g.gain.value = 0.05; wn.connect(lp); lp.connect(g); g.connect(master); wn.start();
+    const g = ctx.createGain(); g.gain.value = 0.05; wn.connect(lp); lp.connect(g); g.connect(bedBus || master); wn.start();
     const wlfo = ctx.createOscillator(); wlfo.frequency.value = 0.08; const wlg = ctx.createGain(); wlg.gain.value = 0.035; wlfo.connect(wlg); wlg.connect(g.gain); wlfo.start();
     const flfo = ctx.createOscillator(); flfo.frequency.value = 0.05; const flg = ctx.createGain(); flg.gain.value = 55; flfo.connect(flg); flg.connect(lp.frequency); flfo.start();
     return g;
@@ -54,10 +63,10 @@
     [[55, 0.06], [82.4, 0.042], [110.5, 0.028]].forEach(([f, base], i) => {
       const o = ctx.createOscillator(); o.type = "sine"; o.frequency.value = f; const g = ctx.createGain(); g.gain.value = base;
       const lo = ctx.createOscillator(); lo.frequency.value = 0.04 + 0.02 * i; const lg = ctx.createGain(); lg.gain.value = base * 0.5; lo.connect(lg); lg.connect(g.gain); lo.start();
-      o.connect(g); g.connect(master); o.start();
+      o.connect(g); g.connect(bedBus || master); o.start();
     });
   }
-  function synthCrowd() { const cn = ctx.createBufferSource(); cn.buffer = noiseBuffer(6); cn.loop = true; const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 500; bp.Q.value = 0.8; const g = ctx.createGain(); g.gain.value = 0.012; cn.connect(bp); bp.connect(g); g.connect(master); cn.start(); return g; }
+  function synthCrowd() { const cn = ctx.createBufferSource(); cn.buffer = noiseBuffer(6); cn.loop = true; const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 500; bp.Q.value = 0.8; const g = ctx.createGain(); g.gain.value = 0.012; cn.connect(bp); bp.connect(g); g.connect(bedBus || master); cn.start(); return g; }
   function synthBoom() {
     const t = ctx.currentTime;
     const o = ctx.createOscillator(); o.frequency.setValueAtTime(120, t); o.frequency.exponentialRampToValueAtTime(30, t + 0.7);
@@ -85,9 +94,9 @@
   function stepsOff() { if (!stepsSrc) return; if (typeof stepsSrc === "number") clearInterval(stepsSrc); else { try { stepsSrc.stop(); } catch (e) {} } stepsSrc = null; }
 
   function startBed() {
-    windGain = buf.wind ? loopBuf(buf.wind, 0.5) : synthWind();
-    crowdGain = buf.crowd ? loopBuf(buf.crowd, 0.0) : synthCrowd();
-    if (buf.drone) loopBuf(buf.drone, 0.5); else synthDrone();
+    windGain = buf.wind ? loopBuf(buf.wind, 0.5, bedBus) : synthWind();
+    crowdGain = buf.crowd ? loopBuf(buf.crowd, 0.0, bedBus) : synthCrowd();
+    if (buf.drone) loopBuf(buf.drone, 0.5, bedBus); else synthDrone();
     console.log("%cМТК24 · звук: сэмплы [" + Object.keys(buf).join(",") + "]" + (Object.keys(buf).length ? "" : " — нет файлов, синтез"), "color:#c9a86a");
   }
   function boom() { if (!ctx || !started) return; if (buf.boom) playBuf(buf.boom, 0.95); else synthBoom(); }
@@ -97,6 +106,7 @@
     if (!ctx) {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination);
+      bedBus = ctx.createGain(); bedBus.gain.value = 1; bedBus.connect(master);   // фоновые слои → шина (дакаются под ГЗК; голос идёт мимо, в master)
       loadSamples().then(() => { startBed(); setNight(night); });
     }
     if (ctx.state === "suspended") ctx.resume();
@@ -119,7 +129,22 @@
     swell();   // мягкий акцент на смене кадра (радио/телеграф теперь триггерится из FX один раз)
   }
 
-  window.MTK24_AUDIO = { resume, setPlaying, setNight, fx, shot, radioOn, radioOff, stepsOn, stepsOff };
+  // дикторская озвучка ГЗК: голос кадра index → играет, фон приглушается (duck); смена кадра обрывает прошлый голос (без наложения)
+  function setVoDuck(on) { if (bedBus && ctx) bedBus.gain.linearRampToValueAtTime(on ? DUCK : 1.0, ctx.currentTime + 0.4); }
+  function vo(index) {
+    if (!ctx || !started) return;
+    if (voSrc) { try { voSrc.onended = null; voSrc.stop(); } catch (e) {} voSrc = null; }
+    const b = voBuf[index];
+    if (!b) { setVoDuck(false); return; }            // на этот кадр нет файла → фон не приглушаем
+    voGain = ctx.createGain(); voGain.gain.value = 1.0; voGain.connect(master);
+    voSrc = ctx.createBufferSource(); voSrc.buffer = b; voSrc.connect(voGain);
+    const token = ++voToken;
+    voSrc.onended = () => { if (token === voToken) setVoDuck(false); };   // голос договорил → фон обратно вверх
+    voSrc.start();
+    setVoDuck(true);
+  }
+
+  window.MTK24_AUDIO = { resume, setPlaying, setNight, fx, shot, vo, radioOn, radioOff, stepsOn, stepsOff };
   // АВТО-СТАРТ: создаём контекст и грузим сэмплы сразу (прелоад). Реальное звучание включается
   // автоматически при первом же взаимодействии/возврате фокуса (политику автоплея Safari иначе не обойти),
   // и срабатывает мгновенно, т.к. всё уже загружено. resume() идемпотентен.

@@ -956,7 +956,7 @@ function applyShot(i) {
   ticks.forEach((tk, k) => { tk.classList.toggle("active", k === i); tk.classList.toggle("done", k < i); });
   setFraming(s);
   applyShotToObjects(i); buildRoutes(s); buildFx(s);
-  if (window.MTK24_AUDIO) window.MTK24_AUDIO.shot(i, s);   // звук кадра (гул/щелчки/акцент)
+  if (window.MTK24_AUDIO) { window.MTK24_AUDIO.shot(i, s); window.MTK24_AUDIO.vo(i); }   // звук кадра (гул/щелчки) + дикторская озвучка ГЗК
   // 3D-вьюер в техзоне: авто-показ модели ориентира текущего кадра (iframe _qa.html через postMessage).
   // Клик по зданию (showModel/pickKeyAt) — отдельный триггер того же вьюера (см. ниже).
   if (hud.mdlView && hud.mdlView.contentWindow) {
