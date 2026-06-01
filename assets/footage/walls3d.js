@@ -19,7 +19,7 @@ function setupStage(canvas){
   const camera = new THREE.PerspectiveCamera(34, w/h, 0.1, 3000);
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true; controls.dampingFactor = 0.08; controls.minDistance = 15; controls.maxDistance = 480; controls.maxPolarAngle = 1.45;
-  const mapTex = new THREE.TextureLoader().load(MAP_URL); mapTex.colorSpace = THREE.SRGBColorSpace; mapTex.center.set(0.5, 0.5); mapTex.rotation = Math.PI;
+  const mapTex = new THREE.TextureLoader().load(MAP_URL); mapTex.colorSpace = THREE.SRGBColorSpace;   // как scene.js: без rotation
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(PW, PD), new THREE.MeshBasicMaterial({ map: mapTex, color: 0xb6b6bc, side: THREE.DoubleSide }));
   floor.rotation.x = -Math.PI/2; scene.add(floor);
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(PW, PD)), new THREE.LineBasicMaterial({ color: 0x2a2e38 })); edges.rotation.x = -Math.PI/2; scene.add(edges);
@@ -43,6 +43,7 @@ function run(S, canvas, focusObjs, handles){            // кадрируем к
 }
 
 window.MTK24Walls = {
+  _gen: 0,
   mount(canvas, sides, tint){                            // видео-стены по дальним граням
     this.unmount();
     const F = window.MTK24_FOOTAGE, file = id => (F.clips.find(c => c.id === id) || {}).file;
@@ -51,21 +52,19 @@ window.MTK24Walls = {
     const h = buildWalls(S.scene, { sides, files: pool, tint, world: WORLD });
     run(S, canvas, [h.object3d, S.floor], [h]);
   },
-  async mountWater(canvas, tint, clipFile){              // вода Невы из проекта + видео
+  async _mountNeva(canvas, tint, clipFile, invert){      // вода Невы / суша + видео (async → guard от гонки)
     this.unmount();
-    const S = setupStage(canvas);
-    const h = await buildNeva(S.scene, { clipFile, tint, invert: false, world: WORLD });
-    if (!R) run(S, canvas, [S.floor], [h]); else { h.dispose(); S.renderer.dispose(); }
+    const gen = this._gen, S = setupStage(canvas);
+    const h = await buildNeva(S.scene, { clipFile, tint, invert, world: WORLD, mapTexture: S.mapTex });
+    if (gen !== this._gen) { h.dispose(); S.renderer.dispose(); return; }   // пока грузили — нас сменили
+    run(S, canvas, [S.floor], [h]);
   },
-  async mountLand(canvas, tint, clipFile){               // инверсия — видео на суше
-    this.unmount();
-    const S = setupStage(canvas);
-    const h = await buildNeva(S.scene, { clipFile, tint, invert: true, world: WORLD });
-    if (!R) run(S, canvas, [S.floor], [h]); else { h.dispose(); S.renderer.dispose(); }
-  },
+  mountWater(canvas, tint, clipFile){ return this._mountNeva(canvas, tint, clipFile, false); },
+  mountLand(canvas, tint, clipFile){ return this._mountNeva(canvas, tint, clipFile, true); },
   setTint(tint){ if (!R) return; R.handles.forEach(h => h.setTint && h.setTint(tint)); },
   active(){ return !!R; },
   unmount(){
+    this._gen++;                                          // инвалидируем незавершённые async-монтирования
     if (!R) return;
     cancelAnimationFrame(R.raf); R.ro.disconnect();
     R.handles.forEach(h => { try { h.dispose && h.dispose(); } catch(e){} });

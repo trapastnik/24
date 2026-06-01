@@ -55,8 +55,8 @@ function makeHandle(group, mats, vids){
     update(time, camPos){ mats.forEach(m => { const u = m.uniforms; if (u && u.time) u.time.value = time; if (u && u.camPos && camPos) u.camPos.value.copy(camPos); }); },
     setTint(T){ setTintU(mats, T); },
     dispose(){ vids.forEach(v => { try { v.pause(); v.removeAttribute('src'); v.load(); } catch(e){} });
-      group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
-      mats.forEach(m => { if (m.uniforms) for (const k in m.uniforms){ const val = m.uniforms[k].value; if (val && val.isTexture) val.dispose(); } m.dispose(); });
+      group.traverse(o => { if (o.geometry) o.geometry.dispose();
+        const m = o.material; if (m){ if (m.uniforms) for (const k in m.uniforms){ const val = m.uniforms[k].value; if (val && val.isTexture) val.dispose(); } m.dispose(); } });   // m.dispose() общую текстуру карты не трогает
       if (group.parent) group.parent.remove(group); } };
 }
 
@@ -79,36 +79,56 @@ export function buildWalls(scene, { sides = 3, files, tint, world = DEF_WORLD })
 }
 
 // ── ВОДА НЕВЫ из проекта (invert=false) ИЛИ СУША (invert=true) + видео ──
-export async function buildNeva(scene, { clipFile, tint, invert = false, world = DEF_WORLD, waterData = null, waterUrl = WATER_URL }){
+// Вода: видео рябит на русле. Инверсия: видео на СПЛОШНОМ прямоугольнике суши (без дырок,
+// без пробелов), а РЕКУ (из нашего слоя воды) показываем поверх — картой; РАМКА = край карты
+// (видео с отступом frame, по краю проступает пол с гравированной рамкой). mapTexture — текстура
+// карты пола (для реки в инверсии); без неё река заливается нейтральным серым.
+export async function buildNeva(scene, { clipFile, tint, invert = false, frame = 0.05, world = DEF_WORLD, waterData = null, waterUrl = WATER_URL, mapTexture = null }){
   const wd = waterData || await (await fetch(waterUrl)).json();
   const PW = world.PW, PD = world.PD;
   const toV = c => { const p = world.uvToWorld(c[0], c[1], 0); return new THREE.Vector2(p.x, -p.z); };
-  const geoms = [];
-  if (invert){
-    const rect = new THREE.Shape([ new THREE.Vector2(-PW/2,-PD/2), new THREE.Vector2(PW/2,-PD/2), new THREE.Vector2(PW/2,PD/2), new THREE.Vector2(-PW/2,PD/2) ]);
-    for (const w of (wd.water || [])){ const o = (w.rings && w.rings[0]) || w.ring; if (!o || o.length < 4) continue; const hp = o.map(toV); if (hp.length >= 3) rect.holes.push(new THREE.Path(hp)); }
-    const g = new THREE.ShapeGeometry(rect); g.rotateX(-Math.PI/2); geoms.push(g);
-  } else {
-    for (const w of (wd.water || [])){ const o = (w.rings && w.rings[0]) || w.ring; if (!o || o.length < 4) continue;
-      const shape = new THREE.Shape(o.map(toV));
-      for (let h = 1; w.rings && h < w.rings.length; h++){ const hp = w.rings[h].map(toV); if (hp.length >= 3) shape.holes.push(new THREE.Path(hp)); }
-      const g = new THREE.ShapeGeometry(shape); g.rotateX(-Math.PI/2); geoms.push(g); }
+  // геометрия русла Невы (полигоны с островами-дырами) — для воды и для оверлея-реки в инверсии
+  const waterGeoms = [];
+  for (const w of (wd.water || [])){
+    const o = (w.rings && w.rings[0]) || w.ring; if (!o || o.length < 4) continue;
+    const shape = new THREE.Shape(o.map(toV));
+    for (let h = 1; w.rings && h < w.rings.length; h++){ const hp = w.rings[h].map(toV); if (hp.length >= 3) shape.holes.push(new THREE.Path(hp)); }
+    const g = new THREE.ShapeGeometry(shape); g.rotateX(-Math.PI/2); waterGeoms.push(g);
   }
   const group = new THREE.Group(); scene.add(group);
-  if (!geoms.length) return makeHandle(group, [], []);
-  const bb = new THREE.Box3(); geoms.forEach(g => { g.computeBoundingBox(); bb.union(g.boundingBox); });
+  const { v, tex } = makeVideo(clipFile); const mats = [], vids = [v];
+
+  // на чём ВИДЕО: инверсия → сплошной прямоугольник суши (отступ frame под рамку); вода → само русло
+  let videoGeoms;
+  if (invert){ const rx = PW*(0.5-frame), rz = PD*(0.5-frame); const g = new THREE.PlaneGeometry(rx*2, rz*2); g.rotateX(-Math.PI/2); videoGeoms = [g]; }
+  else videoGeoms = waterGeoms;
+  if (!videoGeoms.length) return makeHandle(group, [], []);
+  const bb = new THREE.Box3(); videoGeoms.forEach(g => { g.computeBoundingBox(); bb.union(g.boundingBox); });
   const sx = (bb.max.x-bb.min.x)||1, sz = (bb.max.z-bb.min.z)||1;
-  const { v, tex } = makeVideo(clipFile);
   const W = !invert;
-  const mat = new THREE.ShaderMaterial({ transparent:true, depthWrite:false, side:THREE.DoubleSide, vertexShader:NEVA_VERT, fragmentShader:NEVA_FRAG, uniforms:{
+  const vmat = new THREE.ShaderMaterial({ transparent: W, depthWrite: !W, side:THREE.DoubleSide, vertexShader:NEVA_VERT, fragmentShader:NEVA_FRAG, uniforms:{
     tex:{value:tex}, time:{value:0}, camPos:{value:new THREE.Vector3()},
     uShadow:{value:hex(tint.shadow)}, uHi:{value:hex(tint.highlight)}, uStrength:{value:tint.strength}, uBright:{value:tint.brightness}, uContrast:{value:tint.contrast},
     sky:{value:hex(0x33506e)}, fresBias:{value:0.16}, ripple:{value: W?0.06:0.015}, opacity:{value: W?0.96:1.0}, sheen:{value: W?0.38:0.0}, spec:{value: W?1.1:0.0}, sunDir:{value:new THREE.Vector3(0.4,0.7,0.3).normalize()} } });
-  for (const g of geoms){ const pos = g.attributes.position, uv = new Float32Array(pos.count*2);
+  for (const g of videoGeoms){ const pos = g.attributes.position, uv = new Float32Array(pos.count*2);
     for (let i = 0; i < pos.count; i++){ uv[i*2] = (pos.getX(i)-bb.min.x)/sx; uv[i*2+1] = 1.0 - (pos.getZ(i)-bb.min.z)/sz; }
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    const m = new THREE.Mesh(g, mat); m.position.y = W?0.08:0.06; m.renderOrder = 1; group.add(m); }
-  return makeHandle(group, [mat], [v]);
+    const m = new THREE.Mesh(g, vmat); m.position.y = W?0.08:0.05; m.renderOrder = 1; group.add(m); }
+  mats.push(vmat);
+
+  // ИНВЕРСИЯ: поверх видео — РЕКА из слоя воды, картой (UV как у пола). Рамка остаётся полом по краю.
+  if (invert && waterGeoms.length){
+    const wmat = mapTexture
+      ? new THREE.MeshBasicMaterial({ map: mapTexture, color: 0xb6b6bc, side: THREE.DoubleSide })
+      : new THREE.MeshBasicMaterial({ color: 0x8a8f99, side: THREE.DoubleSide });
+    for (const g of waterGeoms){
+      if (mapTexture){ const pos = g.attributes.position, uv = new Float32Array(pos.count*2);
+        for (let i = 0; i < pos.count; i++){ uv[i*2] = pos.getX(i)/PW + 0.5; uv[i*2+1] = -pos.getZ(i)/PD + 0.5; }   // UV карты, как у пола
+        g.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); }
+      const m = new THREE.Mesh(g, wmat); m.position.y = 0.11; m.renderOrder = 2; group.add(m);
+    }
+  }
+  return makeHandle(group, mats, vids);
 }
 
 // ── DOM-врезки/фон (поверх канваса; стили инжектятся один раз) ─────────
@@ -145,7 +165,7 @@ export const FootageFX = {
   update(time){ const cp = this.host && this.host.camera && this.host.camera.position; this.active.forEach(h => h.update && h.update(time, cp)); },
   setTint(t){ const T = this._tint(t); this.active.forEach(h => h.setTint && h.setTint(T)); },
 
-  async neva(f){ const h = await buildNeva(this.host.scene, { clipFile: this._src(f.clip), tint: this._tint(f.tint), invert: !!f.invert, world: this.host.world, waterData: await this._waterData() });
+  async neva(f){ const h = await buildNeva(this.host.scene, { clipFile: this._src(f.clip), tint: this._tint(f.tint), invert: !!f.invert, frame: (f.frame != null ? f.frame : 0.05), world: this.host.world, waterData: await this._waterData(), mapTexture: this.host.mapTexture || null });
     if (f.opacity != null && h.mats[0]) h.mats[0].uniforms.opacity.value = f.opacity; this.active.push(h); return h; },
   walls(f){ const files = (f.clips || DEF_WALL_POOL).map(x => this._src(x)).filter(Boolean);
     const h = buildWalls(this.host.scene, { sides: f.sides || 3, files, tint: this._tint(f.tint), world: this.host.world }); this.active.push(h); return h; },
