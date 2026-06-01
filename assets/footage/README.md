@@ -7,6 +7,9 @@
 ## Файлы
 - `*.webm` — сами клипы (нейтральный grayscale).
 - `footage.js` — каталог (`window.MTK24_FOOTAGE`) + `applyFootageTint()` и пресеты палитры.
+- `footage-fx.js` — встройка в основную сцену: контроллер `FootageFX` (init/beginShot/
+  update/neva/walls/insert/background) + строители `buildWalls`/`buildNeva`. См. `HANDOFF.md`.
+- `HANDOFF.md` — как подключить футидж в `scene.js`/`scenario.js` (рабочий чат).
 - `preview.html` — стенд: все клипы + живые регуляторы тонировки.
 - `usage.html` — мокап применения на карте: фон (подложка/виньетка/Нева/заставка),
   врезки (уголок/плашка/лайтбокс/маркер/триптих) и окружение
