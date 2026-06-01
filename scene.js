@@ -276,7 +276,7 @@ const BASE = { sunC: C(0xfff1d6), sunI: 1.1, ambC: C(0xffffff), ambI: 0.6, mapC:
 const BASE_POS = new THREE.Vector3(-60, 120, 40);
 const sunGoalPos = new THREE.Vector3().copy(BASE_POS);
 // настройки из техзоны (живая правка слайдерами/тумблерами)
-const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, nightLights: true, cityCut: 1.4, pads: false, city: true, editObjects: false, freeCam: false };
+const FX_SET = { light: true, sunFloor: 28, contrast: 1.0, shadows: true, shadowStr: 0.45, nightLights: true, cityCut: 1.4, pads: false, city: true, editObjects: false, freeCam: false, clouds: true };
 let nightF = 0;     // 0 день … 1 ночь — обновляется в updateLighting, читается водой/прочими
 
 function updateLighting(sm, dt, snap) {
@@ -1013,6 +1013,7 @@ function tick(dt, snap) {
     // лунная дорожка наведена в кадр: зеркалим камеру по горизонтали → блик бежит к зрителю
     _moonDir.set(-camera.position.x, Math.max(camera.position.y, 40), -camera.position.z).normalize();
     u.moonDir.value.copy(_moonDir); }
+  updateClouds();                                                  // облака: дрейф + тинт по времени суток
   hud.fill.style.width = (t / SCN.duration * 100) + "%";
   post.render(animT);
 }
@@ -1283,6 +1284,7 @@ function bindControls() {
   const freecam = $("cx-freecam");
   if (freecam) { freecam.checked = FX_SET.freeCam;
     freecam.addEventListener("change", () => setFreeCam(freecam.checked)); }
+  bindCloudControls();
   renderEditor();
   syncPostUI();
 }
@@ -1480,6 +1482,105 @@ function bindNotes() {
   if (clr) clr.onclick = () => { if (notes.length && confirm("Удалить все замечания?")) { notes = []; saveNotes(); renderNotes(); } };
 }
 
+// ----------------------------------------------------------------- облака (билборд-партиклы над городом)
+// Мягкие пуфы-спрайты, собранные в формации-облака, высоко над картой; дрейфуют по ветру
+// (детерминированно по animT — wrap по X, чтобы рендер был воспроизводим). Цвет/яркость —
+// по времени суток (nightF: днём светлые, ночью тёмно-синие лунные). Тумблер FX_SET.clouds.
+// ВАЖНО: облака сажаем заведомо НИЖЕ камеры (та на y≈73…129), иначе billboard-пуфы
+// «заглатывают» кадр. y-слой 18…30 — над зданиями, но далеко под камерой → читаются как
+// облака над городом, видимые сверху, и не закрывают сцену.
+const CLOUDS = {
+  formations: 6, puffs: 26,           // облаков · пуфов в каждом (много пуфов → цельная масса)
+  y: [21, 33], spreadX: 9.5, spreadZ: 6.5, lift: 2.6, // высота слоя · разброс пуфов (тесно → сливаются) · приплюснутость
+  size: [9, 19],                      // размах пуфа (world units)
+  windX: 1.4,                         // дрейф (ед/с)
+  opacity: 0.34, dayCol: 0xe7ecf3, nightCol: 0x5a6680,  // прозрачность дальних (полных) облаков; ночью лунно-серый (виден на тёмном небе)
+  fadeNear: 35, fadeFar: 145,         // ГОРИЗОНТАЛЬНАЯ дистанция до камеры: ближе fadeNear → прозрачно (не загораживает передний/средний план), дальше fadeFar → плотно. По XZ — не зависит от высоты слоя.
+};
+const _cloudPuffTex = spriteCanvas((g, s) => {       // мягкий пуф — радиальный градиент белого
+  const cx = s / 2, grd = g.createRadialGradient(cx, cx, 0, cx, cx, cx);
+  grd.addColorStop(0, "rgba(255,255,255,0.92)"); grd.addColorStop(0.45, "rgba(255,255,255,0.34)");
+  grd.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grd; g.fillRect(0, 0, s, s);
+}, 256);
+const cloudMat = new THREE.SpriteMaterial({ map: _cloudPuffTex, transparent: true, depthWrite: false,
+  fog: false, opacity: CLOUDS.opacity, color: new THREE.Color(CLOUDS.dayCol) });
+const _cloudDay = new THREE.Color(CLOUDS.dayCol), _cloudNight = new THREE.Color(CLOUDS.nightCol), _cloudCol = new THREE.Color();
+const CLOUD_SPAN = PW * 2.4;                          // ширина зоны дрейфа (wrap по X)
+let cloudGroup = null;
+function buildClouds() {
+  if (cloudGroup) return;
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  cloudGroup = new THREE.Group(); cloudGroup.renderOrder = 5;
+  for (let f = 0; f < CLOUDS.formations; f++) {
+    const cl = new THREE.Group();
+    cl.userData.baseX = rnd(-CLOUD_SPAN / 2, CLOUD_SPAN / 2);
+    cl.position.set(cl.userData.baseX, rnd(CLOUDS.y[0], CLOUDS.y[1]), rnd(-PD * 0.75, PD * 0.75));
+    const np = Math.round(rnd(CLOUDS.puffs * 0.6, CLOUDS.puffs));
+    for (let i = 0; i < np; i++) {
+      const sp = new THREE.Sprite(cloudMat.clone()), sz = rnd(CLOUDS.size[0], CLOUDS.size[1]);   // свой материал → своя прозрачность по дистанции
+      sp.scale.set(sz, sz * rnd(0.48, 0.66), 1);      // приплюснутые пуфы
+      sp.position.set(rnd(-CLOUDS.spreadX, CLOUDS.spreadX), rnd(-CLOUDS.lift, CLOUDS.lift), rnd(-CLOUDS.spreadZ, CLOUDS.spreadZ));
+      cl.add(sp);
+    }
+    cloudGroup.add(cl);
+  }
+  scene.add(cloudGroup);
+}
+function updateClouds() {                              // дрейф (детерминир.) + тинт по суткам + фейд по близости к камере
+  if (!cloudGroup) return;
+  cloudGroup.visible = FX_SET.clouds;
+  if (!FX_SET.clouds) return;
+  _cloudCol.copy(_cloudNight).lerp(_cloudDay, 1 - nightF);   // днём светлые, ночью лунно-серые
+  const nf = CLOUDS.fadeNear, span = Math.max(1, CLOUDS.fadeFar - nf);
+  for (const cl of cloudGroup.children) {
+    let x = cl.userData.baseX + animT * CLOUDS.windX;
+    cl.position.x = ((x + CLOUD_SPAN / 2) % CLOUD_SPAN + CLOUD_SPAN) % CLOUD_SPAN - CLOUD_SPAN / 2;   // wrap
+    for (const sp of cl.children) {
+      // ГОРИЗОНТАЛЬНАЯ дистанция (XZ) до камеры — фейд не зависит от высоты слоя
+      const dx = cl.position.x + sp.position.x - camera.position.x;
+      const dz = cl.position.z + sp.position.z - camera.position.z;
+      let t = (Math.sqrt(dx * dx + dz * dz) - nf) / span;
+      t = t < 0 ? 0 : t > 1 ? 1 : t; t = t * t * (3 - 2 * t);   // smoothstep: ближе (передний/средний план) → прозрачнее
+      sp.material.color.copy(_cloudCol);
+      sp.material.opacity = CLOUDS.opacity * t;
+    }
+  }
+}
+function applyCloudSettings() {                        // цвет дня/ночи; opacity/fade читаются вживую в updateClouds
+  _cloudDay.set(CLOUDS.dayCol); _cloudNight.set(CLOUDS.nightCol);
+}
+function rebuildClouds() {                             // пересобрать формации (после смены количества/высоты)
+  if (cloudGroup) {
+    cloudGroup.traverse((o) => { if (o.isSprite && o.material) o.material.dispose(); });
+    scene.remove(cloudGroup);
+  }
+  cloudGroup = null;
+  buildClouds();
+}
+// динамическая панель настроек облаков (тех-зона): количество/прозрачность/фейд/высота/цвет
+function bindCloudControls() {
+  const $ = (id) => document.getElementById(id);
+  const cx = $("cx-clouds"); if (!cx) return;
+  cx.checked = FX_SET.clouds; cx.addEventListener("change", () => { FX_SET.clouds = cx.checked; });
+  const bindSlider = (id, get, set, fmt, onChange) => {
+    const el = $(id), v = $(id + "-v"); if (!el) return;
+    el.value = get(); if (v) v.textContent = fmt(get());
+    el.addEventListener("input", () => { set(+el.value); if (v) v.textContent = fmt(+el.value); });
+    if (onChange) el.addEventListener("change", onChange);
+  };
+  bindSlider("cx-cloud-count", () => CLOUDS.formations, (x) => CLOUDS.formations = x, (x) => x, rebuildClouds);
+  bindSlider("cx-cloud-op", () => Math.round(CLOUDS.opacity * 100), (x) => CLOUDS.opacity = x / 100, (x) => x + "%");
+  bindSlider("cx-cloud-fnear", () => CLOUDS.fadeNear, (x) => CLOUDS.fadeNear = x, (x) => x + " ед");
+  bindSlider("cx-cloud-ffar", () => CLOUDS.fadeFar, (x) => CLOUDS.fadeFar = x, (x) => x + " ед");
+  bindSlider("cx-cloud-h", () => Math.round((CLOUDS.y[0] + CLOUDS.y[1]) / 2),
+    (x) => CLOUDS.y = [x - 6, x + 6], (x) => x + " ед", rebuildClouds);
+  const hex6 = (n) => "#" + (n >>> 0).toString(16).padStart(6, "0").slice(-6);
+  const cd = $("cx-cloud-day"), cn = $("cx-cloud-night");
+  if (cd) { cd.value = hex6(CLOUDS.dayCol); cd.addEventListener("input", () => { CLOUDS.dayCol = parseInt(cd.value.slice(1), 16); applyCloudSettings(); }); }
+  if (cn) { cn.value = hex6(CLOUDS.nightCol); cn.addEventListener("input", () => { CLOUDS.nightCol = parseInt(cn.value.slice(1), 16); applyCloudSettings(); }); }
+}
+
 // ----------------------------------------------------------------- boot
 function boot() {
   resize(); buildTicks(); buildTimeMarks(); bindControls(); bindNotes();
@@ -1497,4 +1598,5 @@ function boot() {
   });
   requestAnimationFrame(frame);
   buildCityMassing();                               // Ф7: массинг города (async, после 1-го кадра)
+  buildClouds();                                    // облака над городом (билборд-партиклы)
 }
