@@ -1359,33 +1359,45 @@ function rebuildCityMassing() {
 // ----------------------------------------------------------------- Ф9: вода Невы (полигоны OSM)
 // Кастомный шейдер: тёмная база + Fresnel (светлее к краю обзора) + рябь (детерминир. по animT)
 // + бегущий солнечный блик. Привязка — та же TPS (geoToWorld), что и массинг.
+// Параметры воды вынесены в WATER (под настройщик; applyWaterSettings обновит uniforms после правки).
+const WATER = {
+  base: 0x0a1622, sky: 0x33506e, sunCol: 0xfff0d0,           // глубина / отражение неба / цвет блика
+  specStr: 1.6, fresnelBias: 0.16, rippleAmp: 0.06, nightGlow: 0.8, opacity: 0.9,
+};
 const waterMat = new THREE.ShaderMaterial({
   transparent: true, depthWrite: false,
   uniforms: {
     time: { value: 0 }, sunDir: { value: new THREE.Vector3(0, 1, 0) }, camPos: { value: new THREE.Vector3() },
     nightF: { value: 0 },
-    base: { value: new THREE.Color(0x0a1622) }, sky: { value: new THREE.Color(0x33506e) },
-    sunCol: { value: new THREE.Color(0xfff0d0) },
+    base: { value: new THREE.Color(WATER.base) }, sky: { value: new THREE.Color(WATER.sky) }, sunCol: { value: new THREE.Color(WATER.sunCol) },
+    specStr: { value: WATER.specStr }, fresBias: { value: WATER.fresnelBias }, ripple: { value: WATER.rippleAmp },
+    nightGlow: { value: WATER.nightGlow }, opacity: { value: WATER.opacity },
   },
   vertexShader: `varying vec3 vW; void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vW = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
-  fragmentShader: `varying vec3 vW; uniform float time, nightF; uniform vec3 sunDir, camPos, base, sky, sunCol;
+  fragmentShader: `varying vec3 vW; uniform float time, nightF, specStr, fresBias, ripple, nightGlow, opacity; uniform vec3 sunDir, camPos, base, sky, sunCol;
     void main(){
       float nx = sin(vW.x*0.25 + time*0.6) + sin((vW.x+vW.z)*0.17 + time*0.8)*0.7;
       float nz = sin(vW.z*0.31 - time*0.5) + sin((vW.x-vW.z)*0.21 - time*0.7)*0.7;
-      vec3 nrm = normalize(vec3(nx*0.06, 1.0, nz*0.06));
+      vec3 nrm = normalize(vec3(nx*ripple, 1.0, nz*ripple));
       vec3 view = normalize(camPos - vW);
       float fres = pow(1.0 - max(dot(nrm, view), 0.0), 3.0);
       float day = 1.0 - nightF;
       // днём — тёмная вода + отражение неба (Френель); ночью отражение гаснет
-      vec3 col = mix(base, sky, clamp((fres + 0.16) * day, 0.0, 1.0));
+      vec3 col = mix(base, sky, clamp((fres + fresBias) * day, 0.0, 1.0));
       // дневной солнечный блик
       vec3 sd = normalize(sunDir);
       float spec = pow(max(dot(reflect(-sd, nrm), view), 0.0), 90.0) * max(sd.y, 0.0);
-      col += sunCol * spec * 1.6;
+      col += sunCol * spec * specStr;
       // ночь: вода просто слегка светится — без бликов/дорожки/расцветки
-      col += base * (0.8 * nightF);
-      gl_FragColor = vec4(col, 0.9); }`,
+      col += base * (nightGlow * nightF);
+      gl_FragColor = vec4(col, opacity); }`,
 });
+function applyWaterSettings() {          // дёрнуть после правки WATER (для будущего настройщика)
+  const u = waterMat.uniforms;
+  u.base.value.set(WATER.base); u.sky.value.set(WATER.sky); u.sunCol.value.set(WATER.sunCol);
+  u.specStr.value = WATER.specStr; u.fresBias.value = WATER.fresnelBias; u.ripple.value = WATER.rippleAmp;
+  u.nightGlow.value = WATER.nightGlow; u.opacity.value = WATER.opacity;
+}
 let waterMesh = null;
 function buildWater() {
   if (waterMesh || !cityWater || !cityWater.length) return;
