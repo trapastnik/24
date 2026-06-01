@@ -72,6 +72,7 @@ const modelCache = {};        // key → нормированный THREE.Group 
 let modelsReady = false;
 // статус загрузки каждой модели (для окна статуса в техзоне)
 const modelStatus = {};        // key → { state:'wait'|'load'|'ok'|'err', file, pct }
+let modelStatusCollapsed = false, audioStatusCollapsed = false;   // авто-сворачивание панелей после загрузки
 function renderLoadStatus() {
   const box = document.getElementById("ls-list"); if (!box) return;
   const keys = Object.keys(MODEL_CFG);
@@ -87,6 +88,39 @@ function renderLoadStatus() {
   const err = keys.filter((k) => modelStatus[k] && modelStatus[k].state === "err").length;
   const lbl = document.getElementById("ls-label");
   if (lbl) lbl.textContent = `статус моделей · ${ok}/${keys.length}` + (err ? ` · ошибок: ${err}` : "");
+  if (!modelStatusCollapsed && keys.length && ok === keys.length) {   // всё загрузилось → свернуть (один раз)
+    const d = document.getElementById("tech-load"); if (d) d.open = false; modelStatusCollapsed = true;
+  }
+}
+// статус звука — диагностика задержки: контекст (suspended до клика), загрузка сэмплов и озвучки
+function asRow(icon, cls, k, f) { return `<div class="ls-row ${cls}"><span class="ls-i">${icon}</span><span class="ls-k">${k}</span><span class="ls-f">${f}</span></div>`; }
+function renderAudioStatus() {
+  const box = document.getElementById("as-list"); if (!box) return;
+  const lbl = document.getElementById("as-label");
+  const A = window.MTK24_AUDIO;
+  if (!A || !A.status) {                                // ?noaudio — звук не инициализирован
+    box.innerHTML = asRow("·", "wait", "звук", "выключен (?noaudio)");
+    if (lbl) lbl.textContent = "статус звука · выкл";
+    if (!audioStatusCollapsed) { const d = document.getElementById("tech-audio"); if (d) d.open = false; audioStatusCollapsed = true; }
+    return;
+  }
+  const s = A.status(), rows = [];
+  const ctxOk = s.ctx === "running";
+  rows.push(asRow(ctxOk ? "✓" : (s.ctx === "suspended" ? "⏸" : "·"), ctxOk ? "ok" : (s.ctx === "suspended" ? "load" : "wait"),
+    "контекст", s.ctx === "suspended" ? "ждёт клика (autoplay)" : (s.playing ? s.ctx : s.ctx + " · пауза")));
+  const names = { wind: "ветер", crowd: "толпа", drone: "дрон", boom: "выстрел", telegraph: "телеграф", footsteps: "шаги" };
+  for (const k in names) {
+    const st = s.files[k] || (s.samplesDone ? "miss" : "wait");
+    rows.push(asRow(st === "ok" ? "✓" : (st === "miss" ? "~" : "…"), st === "ok" ? "ok" : (st === "miss" ? "load" : "wait"),
+      names[k], st === "ok" ? "сэмпл" : (st === "miss" ? "синтез" : "загрузка…")));
+  }
+  const voOk = s.voDone && s.voLoaded === s.voTotal;
+  rows.push(asRow(voOk ? "✓" : (s.voLoaded + "/" + s.voTotal), voOk ? "ok" : "load", "озвучка ГЗК", voOk ? "готова" : "загрузка…"));
+  box.innerHTML = rows.join("");
+  if (lbl) lbl.textContent = `статус звука · ${s.playing ? s.ctx : "пауза"}` + ((s.samplesDone && s.voDone) ? "" : " · загрузка");
+  if (!audioStatusCollapsed && s.samplesDone && s.voDone) {   // звук загрузился → свернуть (один раз)
+    const d = document.getElementById("tech-audio"); if (d) d.open = false; audioStatusCollapsed = true;
+  }
 }
 function preloadModels() {
   const loader = new GLTFLoader();
@@ -752,28 +786,22 @@ const FX_BUILD = {
   },
   // выстрел «Авроры»: сигнал с крепости → дульная вспышка + ударная волна → снаряд → удар
   shot(f) {
-    const aur = fxPoint(f.from), fort = fxPoint(f.signalFrom), win = fxPoint(f.to);
-    if (!aur || !win) return; const at = f.at ?? 0;
+    // ХОЛОСТОЙ выстрел «Авроры» (сигнал): дульная вспышка + концуссия у крейсера.
+    // Снаряд, попадание и «взрыв» Зимнего убраны — после выстрела по дворцу НИЧЕГО не летит.
+    const aur = fxPoint(f.from), fort = fxPoint(f.signalFrom);
+    if (!aur) return; const at = f.at ?? 0;
     const signal = glowSprite(COL.vrk, 5); if (fort) signal.position.copy(fort);
     const muzzle = glowSprite(0xffe6b0, 5); muzzle.position.copy(aur);
     const shock = flatRing(0xffe6b0); shock.position.copy(aur);
-    const ball = glowSprite(0xfff0c0, 4);
-    const impact = glowSprite(COL.redLight, 5); impact.position.copy(win);
-    fxFlashes.push({ lp: at + 0.68 * (1 - at), fired: false, color: "rgba(226,65,43,0.6)" });
     let boomed = false;
     fxItems.push({ update(lp, time) {
       const fp = fpOf(lp, at);
-      if (!boomed && fp >= 0.33) { boomed = true; if (window.MTK24_AUDIO) MTK24_AUDIO.fx("shot"); }   // бум на дульной вспышке
+      if (!boomed && fp >= 0.33) { boomed = true; if (window.MTK24_AUDIO) window.MTK24_AUDIO.fx("shot"); }   // звук — НА дульной вспышке
       let o = tri(fp, 0.10, 0.12); signal.material.opacity = o; signal.scale.setScalar(4 + 6 * o);
       o = tri(fp, 0.33, 0.10); muzzle.material.opacity = 1.2 * o; muzzle.scale.setScalar(4 + 12 * o);
       if (muzzleLight) { muzzleLight.position.set(aur.x, 10, aur.z); muzzleLight.intensity = 700 * o; }   // Ф2: вспышка = реальный свет
-      if (!boomed && fp >= 0.33) { boomed = true; if (window.MTK24_AUDIO) window.MTK24_AUDIO.fx("shot"); }   // звук выстрела — НА дульной вспышке, не на попадании
       const sp = seg(fp, 0.30, 0.62), sr = 2 + sp * 26;
       shock.scale.set(sr, sr, 1); shock.material.opacity = (1 - sp) * 0.7;
-      const bp = seg(fp, 0.34, 0.64);
-      ball.visible = bp > 0 && bp < 1; ball.position.lerpVectors(aur, win, bp);
-      ball.material.opacity = ball.visible ? 1 : 0; ball.scale.setScalar(3 + 2 * Math.sin(bp * Math.PI));
-      o = tri(fp, 0.68, 0.16); impact.material.opacity = 1.3 * o; impact.scale.setScalar(5 + 16 * o);
     } });
   },
   // заливка красным «как чернила»: растущий диск + кромка от точки (объект взят)
@@ -1706,4 +1734,5 @@ function boot() {
   buildClouds();                                    // облака над городом (билборд-партиклы)
   const qp = new URLSearchParams(location.search);  // ?render=1 / ?clean=1 — сразу чистый кадр (Puppeteer/превью)
   if (qp.has("render") || qp.has("clean")) setClean(true, false);
+  renderAudioStatus(); setInterval(renderAudioStatus, 700);   // живой статус звука (загрузка/контекст)
 }

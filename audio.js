@@ -31,6 +31,8 @@
   const VO_COUNT = 11;                              // assets/audio/vo_01..11.mp3 — ГЗК по кадрам (build-time say-Milena)
   const voBuf = [];                                 // декодированная озвучка по индексу кадра
   const DUCK = 0.32;                                // во сколько приглушаем фон под голос
+  const fileState = {};                             // ключ сэмпла → 'wait'|'ok'|'miss' (для панели статуса звука)
+  let samplesDone = false, voDone = false;          // флаги завершения загрузки (диагностика задержки звука)
 
   function noiseBuffer(sec) {
     const b = ctx.createBuffer(1, Math.floor(ctx.sampleRate * sec), ctx.sampleRate);
@@ -40,20 +42,24 @@
   function playBuf(b, g) { const s = ctx.createBufferSource(); s.buffer = b; const gn = ctx.createGain(); gn.gain.value = g == null ? 1 : g; s.connect(gn); gn.connect(master); s.start(); }
 
   async function loadSamples() {
+    Object.keys(FILES).forEach((k) => { fileState[k] = "wait"; });
     await Promise.all(Object.entries(FILES).map(async ([k, url]) => {
-      try { const r = await fetch(url); if (!r.ok) return; buf[k] = await ctx.decodeAudioData(await r.arrayBuffer()); }
-      catch (e) { /* нет файла → синтез-фолбэк */ }
+      try { const r = await fetch(url); if (!r.ok) { fileState[k] = "miss"; return; } buf[k] = await ctx.decodeAudioData(await r.arrayBuffer()); fileState[k] = "ok"; }
+      catch (e) { fileState[k] = "miss"; /* нет файла → синтез-фолбэк */ }
     }));
+    samplesDone = true;
     await loadVo();
   }
   async function loadVo() {                          // дикторская озвучка ГЗК по кадрам (с обходом кэша — после перегенерации)
     if (!ctx) return;
+    voDone = false;
     const bust = "?v=" + Date.now();
     await Promise.all(Array.from({ length: VO_COUNT }, (_, i) => i).map(async (i) => {
       const nn = String(i + 1).padStart(2, "0");
       try { const r = await fetch(`./assets/audio/vo_${nn}.mp3` + bust); if (!r.ok) return; voBuf[i] = await ctx.decodeAudioData(await r.arrayBuffer()); }
       catch (e) { /* нет файла → кадр без озвучки */ }
     }));
+    voDone = true;
   }
 
   // ---- синтез-фолбэки (если сэмпла нет) ----
@@ -115,11 +121,22 @@
       bedBus = ctx.createGain(); bedBus.gain.value = 1; bedBus.connect(master);   // фоновые слои → шина (дакаются под ГЗК; голос идёт мимо, в master)
       loadSamples().then(() => { startBed(); setNight(night); });
     }
-    if (ctx.state === "suspended") ctx.resume();
+    if (ctx.state === "suspended" && playing) ctx.resume();   // не будим контекст, если стоим на паузе
     started = true;
-    master.gain.linearRampToValueAtTime(playing ? vol : 0.0, ctx.currentTime + 0.8);
+    const now = ctx.currentTime;
+    master.gain.cancelScheduledValues(now); master.gain.setValueAtTime(master.gain.value, now);
+    master.gain.linearRampToValueAtTime(playing ? vol : 0.0, now + 0.8);
   }
-  function setPlaying(b) { playing = b; if (ctx && started) master.gain.linearRampToValueAtTime(b ? vol : 0.0, ctx.currentTime + 0.3); }
+  function setPlaying(b) {
+    playing = b;
+    if (!ctx || !started) return;
+    const now = ctx.currentTime;
+    master.gain.cancelScheduledValues(now);                   // сбросить рамп от res() (иначе пауза «отыгрывает» назад)
+    master.gain.setValueAtTime(master.gain.value, now);
+    master.gain.linearRampToValueAtTime(b ? vol : 0.0, now + 0.25);
+    if (b) { if (ctx.state === "suspended") ctx.resume(); }    // play → разморозить контекст
+    else setTimeout(() => { if (!playing && ctx && ctx.state === "running") ctx.suspend(); }, 300);   // пауза → заморозить ПОСЛЕ фейда (беды и ГЗК встают на месте)
+  }
   function setMasterVol(v) { vol = Math.max(0, Math.min(1, v)); if (ctx && started && playing) master.gain.linearRampToValueAtTime(vol, ctx.currentTime + 0.2); }
   function setBedVol(v) { bedVol = Math.max(0, Math.min(1, v)); if (bedBus && ctx) bedBus.gain.linearRampToValueAtTime((voDucked ? DUCK : 1) * bedVol, ctx.currentTime + 0.2); }
   function setVoEnabled(b) { voEnabled = !!b; if (!b && voSrc) { try { voSrc.onended = null; voSrc.stop(); } catch (e) {} voSrc = null; setVoDuck(false); } }
@@ -155,7 +172,12 @@
   }
 
   function reloadVo() { return loadVo(); }           // перечитать озвучку после перегенерации (редактор ГЗК)
-  window.MTK24_AUDIO = { resume, setPlaying, setMasterVol, setBedVol, setVoEnabled, setNight, fx, shot, vo, reloadVo, radioOn, radioOff, stepsOn, stepsOff };
+  function status() {                                // диагностика: почему звук молчит / грузится (панель статуса)
+    return { ctx: ctx ? ctx.state : "—", started, playing,
+      files: Object.assign({}, fileState), samplesDone,
+      voLoaded: voBuf.filter(Boolean).length, voTotal: VO_COUNT, voDone };
+  }
+  window.MTK24_AUDIO = { resume, setPlaying, setMasterVol, setBedVol, setVoEnabled, setNight, fx, shot, vo, reloadVo, status, radioOn, radioOff, stepsOn, stepsOff };
   // АВТО-СТАРТ: создаём контекст и грузим сэмплы сразу (прелоад). Реальное звучание включается
   // автоматически при первом же взаимодействии/возврате фокуса (политику автоплея Safari иначе не обойти),
   // и срабатывает мгновенно, т.к. всё уже загружено. resume() идемпотентен.
