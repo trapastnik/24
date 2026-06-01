@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>МТК-24 · варианты применения врезок (фон / врезка)</title>
+<style>
+  :root { --tint-shadow:#1a0000; --tint-highlight:#ff4326; --tint-strength:.9; --f-bright:1.05; --f-contrast:1.08; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:#06070a; color:#d8dae0;
+              font:13px/1.4 system-ui,Segoe UI,Roboto,sans-serif; overflow:hidden; }
+  /* ── панель управления ─────────────────────────────────────────── */
+  #bar { position:fixed; z-index:30; top:0; left:0; right:0; display:flex; flex-wrap:wrap;
+         gap:10px 16px; align-items:center; padding:10px 14px;
+         background:#0b0d12ee; backdrop-filter:blur(8px); border-bottom:1px solid #20232c; }
+  #bar .grp { display:flex; gap:5px; align-items:center; }
+  #bar b { color:#7d818c; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.5px; }
+  #bar .sep { width:1px; height:22px; background:#262a34; }
+  button, select { background:#181b22; color:#d8dae0; border:1px solid #2a2e39; border-radius:7px;
+                   padding:5px 10px; cursor:pointer; font-size:12px; }
+  button:hover { border-color:#3a3f4d; }
+  button.on { background:#ff4326; border-color:#ff4326; color:#fff; }
+  button.bg.on { background:#3a86ff; border-color:#3a86ff; }
+  .hint { color:#6b6f7a; font-size:11px; }
+  /* ── сцена-«проекция» ──────────────────────────────────────────── */
+  #stage { position:absolute; inset:54px 0 0 0; overflow:hidden; background:#04050a; }
+  #map { position:absolute; inset:0; background:center/cover no-repeat var(--map); filter:brightness(.62) contrast(1.05); }
+  #map.dim { filter:brightness(.28) contrast(1.05) saturate(.7); transition:filter .5s; }
+  #hud { position:absolute; left:18px; bottom:14px; z-index:20; pointer-events:none;
+         font-size:12px; color:#cdd2dc; text-shadow:0 1px 3px #000; max-width:46%; }
+  #hud .tt { font-size:15px; color:#fff; font-weight:600; margin-bottom:3px; }
+  #ovl { position:absolute; inset:0; z-index:10; }
+  /* таймлайн снизу (как в сценарии) */
+  #timeline { position:absolute; left:0; right:0; bottom:0; height:6px; z-index:21; background:#0d0f14; }
+  #timeline i { display:block; height:100%; width:42%; background:linear-gradient(90deg,#ff4326,#ff7a4d); }
+
+  /* ── видео-плитка с настраиваемым дуотоном ─────────────────────── */
+  .mtk-footage { position:relative; isolation:isolate; overflow:hidden; background:#000; }
+  .mtk-footage video { display:block; width:100%; height:100%; object-fit:cover;
+       filter:grayscale(1) brightness(var(--f-bright,1)) contrast(var(--f-contrast,1)); }
+  .mtk-footage::before, .mtk-footage::after { content:''; position:absolute; inset:0;
+       pointer-events:none; opacity:var(--tint-strength,0); }
+  .mtk-footage::before { background:var(--tint-shadow); mix-blend-mode:multiply; }
+  .mtk-footage::after  { background:var(--tint-highlight); mix-blend-mode:screen; }
+
+  /* === ФОН ======================================================== */
+  .bg-full { position:absolute; inset:0; }                              /* подложка-текстура */
+  .bg-full.blend { mix-blend-mode:screen; opacity:.22; }
+  .bg-vign { position:absolute; inset:0;                                /* рамка-виньетка */
+       -webkit-mask-image:radial-gradient(ellipse 58% 62% at 50% 48%, transparent 46%, #000 78%);
+               mask-image:radial-gradient(ellipse 58% 62% at 50% 48%, transparent 46%, #000 78%);
+       opacity:.5; mix-blend-mode:screen; }
+  .bg-neva { position:absolute; left:-12%; right:-12%; top:46%; height:120px;     /* «Нева» */
+       transform:rotate(-15deg); opacity:.85; mix-blend-mode:screen;
+       -webkit-mask-image:linear-gradient(#0000,#000 30%,#000 70%,#0000);
+               mask-image:linear-gradient(#0000,#000 30%,#000 70%,#0000); }
+  .intro-wrap { position:absolute; inset:0; }                            /* заставка */
+  .intro-wrap .ttl { position:absolute; inset:0; display:flex; flex-direction:column;
+       align-items:center; justify-content:center; z-index:5; text-align:center;
+       text-shadow:0 2px 14px #000; }
+  .intro-wrap .ttl h2 { font-size:42px; margin:0; letter-spacing:2px; font-weight:700; }
+  .intro-wrap .ttl p { font-size:16px; color:#c9ccd4; margin:8px 0 0; }
+  .intro-wrap .scrim { position:absolute; inset:0; background:radial-gradient(transparent,#06070acc); z-index:3; }
+
+  /* === ВРЕЗКА ===================================================== */
+  .card { position:absolute; right:22px; top:22px; width:300px; z-index:15;          /* уголок-карточка */
+       border:2px solid #d9b25a; border-radius:4px; box-shadow:0 10px 34px #000a, 0 0 0 1px #0008;
+       background:#000; }
+  .card .mtk-footage { aspect-ratio:634/480; }
+  .card .cap { padding:6px 9px; background:#12141a; border-top:1px solid #2a2e39; }
+  .card .cap b { color:#fff; } .card .cap span { color:#8d919c; }
+  .lower { position:absolute; left:0; right:0; bottom:6px; height:118px; z-index:15;  /* нижняя плашка */
+       display:flex; gap:12px; align-items:stretch; padding:0 16px; }
+  .lower .mtk-footage { width:200px; border:1px solid #d9b25a88; border-radius:3px; }
+  .lower .txt { flex:1; display:flex; flex-direction:column; justify-content:center;
+       background:linear-gradient(90deg,#0b0d12ee,#0b0d1299); border-radius:3px; padding:10px 16px; }
+  .lower .txt .tt { font-size:17px; color:#fff; font-weight:600; }
+  .lower .txt .sub { color:#aeb2bc; margin-top:4px; max-width:640px; }
+  .lightbox { position:absolute; inset:0; z-index:18; display:flex; align-items:center; justify-content:center; } /* лайтбокс */
+  .lightbox .mtk-footage { width:54%; aspect-ratio:634/480; border:3px solid #fff2;
+       box-shadow:0 0 0 1px #000, 0 24px 80px #000c; animation:bloom .6s ease both; }
+  @keyframes bloom { from{ transform:scale(.86); opacity:0 } to{ transform:scale(1); opacity:1 } }
+  .marker { position:absolute; z-index:16; width:128px; height:128px; border-radius:50%;     /* в маркере точки */
+       border:3px solid #ff4326; box-shadow:0 0 0 4px #ff43262e, 0 8px 26px #000a; overflow:hidden;
+       animation:pulse 1.8s ease-in-out infinite; }
+  .marker .mtk-footage { width:100%; height:100%; }
+  .marker .lbl { position:absolute; left:50%; bottom:-22px; transform:translateX(-50%);
+       white-space:nowrap; font-size:12px; color:#fff; text-shadow:0 1px 3px #000; }
+  @keyframes pulse { 0%,100%{ box-shadow:0 0 0 4px #ff43262e,0 8px 26px #000a } 50%{ box-shadow:0 0 0 12px #ff432600,0 8px 26px #000a } }
+  .strip { position:absolute; left:0; right:0; top:50%; transform:translateY(-50%);            /* диптих/триптих */
+       display:flex; gap:8px; padding:0 24px; z-index:15; }
+  .strip .mtk-footage { flex:1; aspect-ratio:16/10; border:1px solid #ffffff22; }
+
+  /* === ОКРУЖЕНИЕ: видео-стены по дальним граням сцены (three.js + OrbitControls) === */
+  .room { position:absolute; inset:0; overflow:hidden; background:#05060a; }
+  .room canvas { display:block; width:100%; height:100%; touch-action:none; }
+  .room .nb { position:absolute; left:18px; top:14px; z-index:5; pointer-events:none;
+       font-size:12px; color:#9aa0ac; text-shadow:0 1px 3px #000; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <div class="grp"><b>Фон</b>
+    <button class="bg" data-p="bg-texture">подложка</button>
+    <button class="bg" data-p="bg-vignette">виньетка</button>
+    <button class="bg" data-p="bg-neva">Нева</button>
+    <button class="bg" data-p="bg-land">Нева⁻¹ (суша)</button>
+    <button class="bg" data-p="bg-intro">заставка</button>
+  </div>
+  <div class="sep"></div>
+  <div class="grp"><b>Врезка</b>
+    <button data-p="ins-corner">уголок</button>
+    <button data-p="ins-lower">плашка</button>
+    <button data-p="ins-lightbox">лайтбокс</button>
+    <button data-p="ins-marker">в&nbsp;маркере</button>
+    <button data-p="ins-strip">триптих</button>
+  </div>
+  <div class="sep"></div>
+  <div class="grp"><b>Окружение</b>
+    <button data-p="env-walls3">стены&nbsp;×3&nbsp;(П)</button>
+    <button data-p="env-walls2">стены&nbsp;×2&nbsp;(Г)</button>
+  </div>
+  <div class="sep"></div>
+  <div class="grp"><b>Клип</b><select id="clip"></select></div>
+  <div class="grp"><b>Тон</b><select id="tint"></select></div>
+  <span class="hint" id="hint"></span>
+</div>
+
+<div id="stage">
+  <div id="map"></div>
+  <div id="ovl"></div>
+  <div id="hud"><div class="tt" id="hudT"></div><div id="hudS"></div></div>
+  <div id="timeline"><i></i></div>
+</div>
+
+<!-- three подключаем ТЕМ ЖЕ способом, что и основной проект (см. index.html) -->
+<script type="importmap">
+{ "imports": { "three": "../../lib/three/three.module.min.js", "three/addons/": "../../lib/three/addons/" } }
+</script>
+<script type="module" src="walls3d.js"></script>
+<script src="footage.js"></script>
+<script>
+  var F = window.MTK24_FOOTAGE;
+  var stage = document.getElementById('stage'), ovl = document.getElementById('ovl'),
+      map = document.getElementById('map'), hud = document.getElementById('hud');
+  document.documentElement.style.setProperty('--map', "url('../map/petrograd_2048.png')");
+
+  // выбор клипа и тона
+  var clipSel = document.getElementById('clip'), tintSel = document.getElementById('tint');
+  F.clips.forEach(function(c){ var o=document.createElement('option'); o.value=c.id;
+      o.textContent=(c.kind==='loop'?'▣ ':'▸ ')+c.title+' · '+c.scene; clipSel.appendChild(o); });
+  Object.keys(F.tint.presets).forEach(function(k){ var o=document.createElement('option'); o.value=k;
+      o.textContent=F.tint.presets[k].label; if(k===F.tint.default)o.selected=true; tintSel.appendChild(o); });
+
+  var state = { pattern:'bg-texture', clip:'storm_smoke', tint:F.tint.default };
+  clipSel.value = state.clip;
+
+  function clipById(id){ return F.clips.find(function(c){return c.id===id;}) || F.clips[0]; }
+  // создать видео-плитку с применённым дуотоном
+  function tile(id){
+    var c = clipById(id), box=document.createElement('div'); box.className='mtk-footage';
+    var v=document.createElement('video'); v.src=c.file; v.autoplay=v.muted=v.loop=v.playsInline=true;
+    v.setAttribute('muted',''); v.setAttribute('playsinline',''); box.appendChild(v);
+    window.applyFootageTint(box, state.tint); return box;
+  }
+  function setHud(t,s){ document.getElementById('hudT').textContent=t||''; document.getElementById('hudS').textContent=s||''; }
+
+  var HINTS = {
+    'bg-texture':'ФОН: полноэкранная петля под картой, blend screen + низкая прозрачность — карта и HUD читаются поверх.',
+    'bg-vignette':'ФОН: кадр только по краям (radial-маска), центр с картой свободен — «дышащая» рамка.',
+    'bg-neva':'ФОН: вода Невы ИЗ ПРОЕКТА (русло + риппл-шейдер) — на реальной реке рябит видео. Карта горизонтальна, тяни — орбита.',
+    'bg-land':'ФОН: инверсия «Невы» — видео на СУШЕ (карта минус русло), а Нева остаётся пустой картой. Тяни — орбита.',
+    'bg-intro':'ФОН: полноэкранная заставка под титрами Вступления, затемнение по краям.',
+    'ins-corner':'ВРЕЗКА: документальная карточка в углу с подписью и «киношной» рамкой — на время своего Кадра.',
+    'ins-lower':'ВРЕЗКА: нижняя плашка у линии времени — кадр слева, дикторский текст справа.',
+    'ins-lightbox':'ВРЕЗКА: расцветает по центру поверх притемнённой карты на 2–5с, затем гаснет.',
+    'ins-marker':'ВРЕЗКА: кадр в круглом пульсирующем маркере прямо на точке карты (напр. «Аврора» на Неве).',
+    'ins-strip':'ВРЕЗКА: 2–3 кадра в ряд — мини-монтаж (мосты/штурм).',
+    'env-walls3':'ОКРУЖЕНИЕ: видео-стены по дальним граням сцены — сзади + слева + справа (П). Карта — пол.',
+    'env-walls2':'ОКРУЖЕНИЕ: видео-стены по двум дальним граням — сзади + слева (Г). Карта — пол.'
+  };
+
+  function render(){
+    if (window.MTK24Walls && window.MTK24Walls.active()) window.MTK24Walls.unmount();   // снять 3D-вьюер
+    ovl.innerHTML=''; map.classList.remove('dim'); map.style.display=''; hud.style.display='none';
+    var c = clipById(state.clip), p = state.pattern;
+    document.getElementById('hint').textContent = HINTS[p] || '';
+
+    if(p==='bg-texture'){
+      var t=tile(state.clip); t.className+=' bg-full blend'; ovl.appendChild(t);
+      hud.style.display='block'; setHud('Кадр 5 · Ночь','Подложка-текстура под картой');
+    }
+    else if(p==='bg-vignette'){
+      var t=tile(state.clip); t.className+=' bg-vign'; ovl.appendChild(t);
+      hud.style.display='block'; setHud('Рамка-виньетка','Кадр по краям, карта в центре');
+    }
+    else if(p==='bg-neva'){
+      map.style.display='none';                       // карту-«пол» рисует three.js
+      var room=document.createElement('div'); room.className='room';
+      var cv=document.createElement('canvas'); room.appendChild(cv);
+      var nb=document.createElement('div'); nb.className='nb'; nb.textContent='вода Невы из проекта (риппл-шейдер) — видео рябит на реке · тяни мышью — орбита'; room.appendChild(nb);
+      ovl.appendChild(room);
+      var clipFile=(F.clips.find(function(c){return c.id===state.clip;})||{}).file;
+      var mountW=function(){ if(!window.MTK24Walls){ return setTimeout(mountW,80); }
+        window.MTK24Walls.mountWater(cv, F.tint.presets[state.tint] || F.tint.presets[F.tint.default], clipFile); };
+      mountW();
+    }
+    else if(p==='bg-land'){
+      map.style.display='none';
+      var roomL=document.createElement('div'); roomL.className='room';
+      var cvL=document.createElement('canvas'); roomL.appendChild(cvL);
+      var nbL=document.createElement('div'); nbL.className='nb'; nbL.textContent='инверсия Невы — видео на суше (город), река остаётся картой · тяни мышью — орбита'; roomL.appendChild(nbL);
+      ovl.appendChild(roomL);
+      var clipFileL=(F.clips.find(function(c){return c.id===state.clip;})||{}).file;
+      var mountL=function(){ if(!window.MTK24Walls){ return setTimeout(mountL,80); }
+        window.MTK24Walls.mountLand(cvL, F.tint.presets[state.tint] || F.tint.presets[F.tint.default], clipFileL); };
+      mountL();
+    }
+    else if(p==='bg-intro'){
+      var w=document.createElement('div'); w.className='intro-wrap';
+      var t=tile(state.clip); t.className+=' bg-full'; t.style.opacity=.8; w.appendChild(t);
+      var sc=document.createElement('div'); sc.className='scrim'; w.appendChild(sc);
+      var tt=document.createElement('div'); tt.className='ttl';
+      tt.innerHTML='<h2>24–25 ОКТЯБРЯ 1917</h2><p>Петроград. Два центра власти.</p>'; w.appendChild(tt);
+      ovl.appendChild(w);
+    }
+    else if(p==='ins-corner'){
+      var card=document.createElement('div'); card.className='card'; card.appendChild(tile(state.clip));
+      var cap=document.createElement('div'); cap.className='cap';
+      cap.innerHTML='<b>'+c.title+'</b> · <span>'+c.scene+'</span>'; card.appendChild(cap);
+      ovl.appendChild(card);
+      hud.style.display='block'; setHud(c.scene, c.title);
+    }
+    else if(p==='ins-lower'){
+      var lo=document.createElement('div'); lo.className='lower';
+      lo.appendChild(tile(state.clip));
+      var tx=document.createElement('div'); tx.className='txt';
+      tx.innerHTML='<div class="tt">'+c.title+' · '+c.scene+'</div>'+
+        '<div class="sub">Дикторский текст идёт здесь, синхронно с линией времени внизу. Кадр-врезка слева иллюстрирует событие.</div>';
+      lo.appendChild(tx); ovl.appendChild(lo);
+    }
+    else if(p==='ins-lightbox'){
+      map.classList.add('dim');
+      var lb=document.createElement('div'); lb.className='lightbox'; lb.appendChild(tile(state.clip)); ovl.appendChild(lb);
+      hud.style.display='block'; setHud(c.scene, c.title+' — врезка на 2–5с');
+    }
+    else if(p==='ins-marker'){
+      var positions={ aurora_neva:[58,55], gate_eagle:[46,44], staircase_storm:[44,42],
+        smolny_congress:[72,30], winter_roofline:[45,40], bridge_raising:[38,38],
+        proclamation:[30,60], map_petrograd:[50,50], night_square:[46,45], storm_smoke:[46,44] };
+      var pos=positions[state.clip]||[50,50];
+      var m=document.createElement('div'); m.className='marker';
+      m.style.left=pos[0]+'%'; m.style.top=pos[1]+'%'; m.style.transform='translate(-50%,-50%)';
+      m.appendChild(tile(state.clip));
+      var lbl=document.createElement('div'); lbl.className='lbl'; lbl.textContent=c.title; m.appendChild(lbl);
+      ovl.appendChild(m);
+      hud.style.display='block'; setHud(c.scene, 'Кадр в маркере точки');
+    }
+    else if(p==='ins-strip'){
+      var picks={ bridge_raising:['bridge_raising','gate_eagle','staircase_storm'] };
+      var ids=picks[state.clip]||[state.clip,'gate_eagle','staircase_storm'];
+      var s=document.createElement('div'); s.className='strip';
+      ids.forEach(function(id){ s.appendChild(tile(id)); }); ovl.appendChild(s);
+      hud.style.display='block'; setHud('Мини-монтаж', ids.length+' кадра в ряд');
+    }
+    else if(p==='env-walls3' || p==='env-walls2'){
+      map.style.display='none';                       // свой «пол» (карта) рисует three.js
+      var room=document.createElement('div'); room.className='room';
+      var cv=document.createElement('canvas'); room.appendChild(cv);
+      var nb=document.createElement('div'); nb.className='nb'; nb.textContent='тяни мышью — свободная орбита (OrbitControls), колесо — зум'; room.appendChild(nb);
+      ovl.appendChild(room);
+      var sides = (p==='env-walls3') ? 3 : 2;
+      var mount = function(){
+        if(!window.MTK24Walls){ return setTimeout(mount, 80); }   // ждём загрузки модуля
+        window.MTK24Walls.mount(cv, sides, F.tint.presets[state.tint] || F.tint.presets[F.tint.default]);
+      };
+      mount();
+    }
+  }
+
+  // кнопки
+  [].forEach.call(document.querySelectorAll('#bar button'), function(b){
+    b.onclick=function(){ state.pattern=b.dataset.p;
+      [].forEach.call(document.querySelectorAll('#bar button'), function(x){ x.classList.toggle('on', x===b); });
+      render(); };
+  });
+  clipSel.onchange=function(e){ state.clip=e.target.value; render(); };
+  tintSel.onchange=function(e){ state.tint=e.target.value;
+    // в 3D-вьюере меняем тон без пересборки видео (плавно)
+    if(window.MTK24Walls && window.MTK24Walls.active()) window.MTK24Walls.setTint(F.tint.presets[state.tint]);
+    else render(); };
+
+  // старт
+  document.querySelector('#bar button[data-p="bg-texture"]').classList.add('on');
+  render();
+</script>
+</body>
+</html>
