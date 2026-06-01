@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["tools/edit_server.py", "8124"],
       "port": 8124
+    },
+    {
+      "name": "mtk24-media",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8126"],
+      "port": 8126
     }
   ]
 }

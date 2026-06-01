@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>МТК-24 · медиа-врезки (тонировка настраивается)</title>
+<style>
+  :root { --tint-shadow:#000; --tint-highlight:#fff; --tint-strength:0; --f-bright:1; --f-contrast:1; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0c0d10; color:#d8dae0; font:14px/1.4 system-ui,Segoe UI,Roboto,sans-serif; }
+  header { position:sticky; top:0; z-index:10; background:#111319ee; backdrop-filter:blur(6px);
+           border-bottom:1px solid #23262f; padding:14px 18px; }
+  h1 { font-size:16px; margin:0 0 10px; font-weight:600; letter-spacing:.2px; }
+  h1 small { color:#7d818c; font-weight:400; }
+  .controls { display:flex; flex-wrap:wrap; gap:16px; align-items:center; }
+  .group { display:flex; gap:6px; align-items:center; }
+  .group b { color:#9aa0ac; font-weight:500; margin-right:2px; }
+  button { background:#1b1e26; color:#d8dae0; border:1px solid #2c303b; border-radius:7px;
+           padding:6px 11px; cursor:pointer; font-size:13px; }
+  button:hover { border-color:#3a3f4d; }
+  button.on { background:#ff4326; border-color:#ff4326; color:#fff; }
+  input[type=range] { width:120px; accent-color:#ff4326; }
+  .val { color:#7d818c; width:34px; display:inline-block; text-align:right; font-variant-numeric:tabular-nums; }
+  main { padding:18px; display:grid; gap:16px; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
+  figure { margin:0; background:#15171d; border:1px solid #23262f; border-radius:10px; overflow:hidden; }
+  .mtk-footage { position:relative; isolation:isolate; aspect-ratio:634/480; background:#000; }
+  .mtk-footage video { display:block; width:100%; height:100%; object-fit:cover;
+       filter: grayscale(1) brightness(var(--f-bright,1)) contrast(var(--f-contrast,1)); }
+  /* Дуотон поверх grayscale: тени → shadow (multiply), света → highlight (screen). */
+  .mtk-footage::before, .mtk-footage::after { content:''; position:absolute; inset:0;
+       pointer-events:none; opacity:var(--tint-strength,0); }
+  .mtk-footage::before { background:var(--tint-shadow); mix-blend-mode:multiply; }
+  .mtk-footage::after  { background:var(--tint-highlight); mix-blend-mode:screen; }
+  figcaption { padding:8px 11px; display:flex; justify-content:space-between; gap:8px; }
+  figcaption .t { color:#e7e9ee; }
+  figcaption .s { color:#7d818c; font-size:12px; white-space:nowrap; }
+  .badge { font-size:11px; color:#0c0d10; background:#9aa0ac; border-radius:4px; padding:1px 5px; }
+  .badge.loop { background:#ffc233; }
+</style>
+</head>
+<body>
+<header>
+  <h1>МТК-24 · медиа-врезки из «Октября» (1927) <small>— ч/б, тонировка настраивается в рантайме</small></h1>
+  <div class="controls">
+    <div class="group"><b>Палитра:</b><span id="presets"></span></div>
+    <div class="group"><b>Сила</b><input id="strength" type="range" min="0" max="1" step="0.01"><span class="val" id="strengthV"></span></div>
+    <div class="group"><b>Ярк.</b><input id="bright" type="range" min="0.6" max="1.6" step="0.01"><span class="val" id="brightV"></span></div>
+    <div class="group"><b>Контр.</b><input id="contrast" type="range" min="0.6" max="1.6" step="0.01"><span class="val" id="contrastV"></span></div>
+    <div class="group"><b>Свет</b><input id="hi" type="color"></div>
+  </div>
+</header>
+<main id="grid"></main>
+
+<script src="footage.js"></script>
+<script>
+  var F = window.MTK24_FOOTAGE, grid = document.getElementById('grid'), cards = [];
+  // карточки
+  F.clips.forEach(function (c) {
+    var fig = document.createElement('figure');
+    var box = document.createElement('div'); box.className = 'mtk-footage';
+    var v = document.createElement('video');
+    v.src = F.dir.replace('assets/footage/', '') + c.file; // preview.html лежит рядом с клипами
+    v.autoplay = v.muted = v.loop = v.playsInline = true; v.setAttribute('muted',''); v.setAttribute('playsinline','');
+    box.appendChild(v);
+    var cap = document.createElement('figcaption');
+    cap.innerHTML = '<span class="t">' + c.title + ' <span class="badge ' + c.kind + '">' +
+        (c.kind === 'loop' ? 'фон' : 'врезка') + '</span></span><span class="s">' + c.scene + ' · ' + c.dur + 'с</span>';
+    fig.appendChild(box); fig.appendChild(cap); grid.appendChild(fig);
+    cards.push(box);
+  });
+
+  // состояние тонировки (общее на все карточки в демо)
+  var cur = Object.assign({}, F.tint.presets[F.tint.default]);
+  function paint() {
+    cards.forEach(function (el) { window.applyFootageTint(el, cur); });
+    document.getElementById('strength').value = cur.strength; document.getElementById('strengthV').textContent = (+cur.strength).toFixed(2);
+    document.getElementById('bright').value = cur.brightness;  document.getElementById('brightV').textContent = (+cur.brightness).toFixed(2);
+    document.getElementById('contrast').value = cur.contrast;  document.getElementById('contrastV').textContent = (+cur.contrast).toFixed(2);
+    document.getElementById('hi').value = cur.highlight;
+  }
+  // кнопки пресетов
+  var pc = document.getElementById('presets');
+  Object.keys(F.tint.presets).forEach(function (key) {
+    var b = document.createElement('button'); b.textContent = F.tint.presets[key].label; b.dataset.k = key;
+    if (key === F.tint.default) b.className = 'on';
+    b.onclick = function () {
+      cur = Object.assign({}, F.tint.presets[key]);
+      [].forEach.call(pc.children, function (x) { x.className = (x === b) ? 'on' : ''; });
+      paint();
+    };
+    pc.appendChild(b);
+  });
+  // слайдеры
+  document.getElementById('strength').oninput = function (e) { cur.strength = +e.target.value; paint(); };
+  document.getElementById('bright').oninput   = function (e) { cur.brightness = +e.target.value; paint(); };
+  document.getElementById('contrast').oninput = function (e) { cur.contrast = +e.target.value; paint(); };
+  document.getElementById('hi').oninput       = function (e) { cur.highlight = e.target.value; paint(); };
+  paint();
+</script>
+</body>
+</html>
