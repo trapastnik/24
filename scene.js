@@ -1182,7 +1182,9 @@ canvas.addEventListener("pointermove", (e) => {
   if (dragObj && didDrag) {                           // перемещение объекта по карте
     const pt = worldFromPointer(e.clientX, e.clientY);
     if (pt) {
-      POS[dragObj] = { u: +(pt.x / PW + 0.5).toFixed(4), v: +(pt.z / PD + 0.5).toFixed(4) };
+      const u = +(pt.x / PW + 0.5).toFixed(4), v = +(pt.z / PD + 0.5).toFixed(4);
+      POS[dragObj] = { u, v };
+      if (LOC.points[dragObj]) { LOC.points[dragObj].u = u; LOC.points[dragObj].v = v; }   // канон → data/locations.js (один источник)
       const o = objects[dragObj]; if (o) { o.mesh.position.x = pt.x; o.mesh.position.z = pt.z;
         if (o.label) { o.label.position.x = pt.x; o.label.position.z = pt.z; } }
       renderEditor();
@@ -1193,7 +1195,9 @@ canvas.addEventListener("pointermove", (e) => {
   const key = pickKeyAt(e.clientX, e.clientY);
   canvas.style.cursor = key && MODEL_CFG[key] ? "pointer" : "default";
 });
-canvas.addEventListener("pointerup", () => { downXY = null; if (dragObj) { dragObj = null; if (FX_SET.freeCam) controls.enabled = true; } });
+canvas.addEventListener("pointerup", () => { downXY = null;
+  if (dragObj) { const k = dragObj; dragObj = null; if (FX_SET.freeCam) controls.enabled = true;
+    if (didDrag && LOC.points[k]) saveLocations(); } });   // здание переставили → сохранить позицию в data/locations.js
 canvas.addEventListener("click", (e) => {
   if (didDrag) { didDrag = false; return; }          // это был драг (камера/перемещение), не клик
   const key = pickKeyAt(e.clientX, e.clientY);
@@ -1201,6 +1205,29 @@ canvas.addEventListener("click", (e) => {
   if (FX_SET.editObjects) { sel = key; renderEditor(); return; }  // режим правки — выбрать объект
   if (MODEL_CFG[key]) showModel(key);                             // иначе — 3D-вьюер
 });
+
+// ---- сохранение позиций в data/locations.js (ЕДИНЫЙ источник, тот же формат/эндпоинт, что у tools/authoring.html) ----
+function serializeLocations() {
+  let s = "window.MTK24_LOCATIONS = {\n  georef: true,\n  points: {\n";
+  for (const [k, p] of Object.entries(LOC.points || {}))
+    s += `    ${k}: { u: ${p.u}, v: ${p.v}, name: ${JSON.stringify(p.name || k)}, force: ${JSON.stringify(p.force || "pg")} },\n`;
+  s += "  },\n  directions: {\n";
+  for (const [k, p] of Object.entries(LOC.directions || {})) s += `    ${k}: { u: ${p.u}, v: ${p.v} },\n`;
+  s += "  },\n  routes: {\n";
+  for (const [k, wps] of Object.entries(LOC.routes || {})) s += `    ${k}: ${JSON.stringify(wps)},\n`;
+  s += "  },\n};\n"; return s;
+}
+let _locSaveTimer = null, locSaveStatus = "";
+function saveLocations() {                            // дебаунс → POST в edit_server (как разметчик)
+  clearTimeout(_locSaveTimer);
+  _locSaveTimer = setTimeout(async () => {
+    try {
+      const r = await fetch("/api/save-locations", { method: "POST", headers: { "Content-Type": "text/plain" }, body: serializeLocations() });
+      locSaveStatus = r.ok ? "✓ позиция сохранена в data/locations.js" : "⚠ не сохранено";
+    } catch (e) { locSaveStatus = "⚠ не сохранено (нужен локальный edit_server)"; }
+    if (FX_SET.editObjects) renderEditor();
+  }, 200);
+}
 
 // ----------------------------------------------------------------- редактор объектов (двигать; мост — форма/поворот)
 function rebuildBridge(key) {                        // пересобрать мост под текущий BRIDGE_CFG/позицию
@@ -1216,15 +1243,15 @@ function rebuildBridge(key) {                        // пересобрать �
 function renderEditor() {
   const box = document.getElementById("bt-readout"); if (!box) return;
   if (!FX_SET.editObjects) { box.innerHTML = ""; return; }
-  if (!sel) { box.textContent = "тащи мышью · ←/→ поворот · ↑/↓ масштаб (мост — длина) · , / . ширина моста"; return; }
+  if (!sel) { box.innerHTML = "тащи мышью (позиция → авто в locations.js) · ←/→ поворот · ↑/↓ масштаб (мост — длина) · , / . ширина моста" + (locSaveStatus ? ` · ${locSaveStatus}` : ""); return; }
   const uv = objUV(sel) || { u: 0, v: 0 }, isBr = /_br$/.test(sel);
   let s = `<b>${sel}</b> · u ${(+uv.u).toFixed(3)} v ${(+uv.v).toFixed(3)}`;
   if (isBr) { const c = bridgeCfg(sel); s += ` · ${Math.round(c.yaw * 180 / Math.PI)}° дл ${c.len.toFixed(0)} шир ${c.wide.toFixed(1)}`; }
   else { s += ` · ${Math.round(objYaw(sel) * 180 / Math.PI)}° · ×${objScale(sel).toFixed(2)}`; }
-  box.innerHTML = s + ` · <span class="bt-copy" id="bt-copy">⧉ конфиг</span>`;
+  box.innerHTML = s + ` · <span class="bt-copy" id="bt-copy">⧉ поворот/масштаб</span>` + (locSaveStatus ? ` · ${locSaveStatus}` : "");
   const cp = document.getElementById("bt-copy");
-  if (cp) cp.onclick = () => {
-    const t = "POS = " + JSON.stringify(POS) + ";\nYAW = " + JSON.stringify(YAW) + ";\nSCALE = " + JSON.stringify(SCALE) + ";\nBRIDGE_CFG = " + JSON.stringify(BRIDGE_CFG) + ";";
+  if (cp) cp.onclick = () => {   // позиция авто-сохраняется в locations.js; здесь — только поворот/масштаб/мост (консты scene.js)
+    const t = "YAW = " + JSON.stringify(YAW) + ";\nSCALE = " + JSON.stringify(SCALE) + ";\nBRIDGE_CFG = " + JSON.stringify(BRIDGE_CFG) + ";";
     if (navigator.clipboard) navigator.clipboard.writeText(t); console.log(t); cp.textContent = "✓ скопировано";
   };
 }
