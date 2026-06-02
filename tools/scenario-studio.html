@@ -34,6 +34,10 @@
   #ovr .nm{font-weight:600}
   #camhint{position:absolute;left:10px;bottom:10px;background:rgba(12,16,18,.72);border:1px solid var(--line);border-radius:8px;
     padding:5px 9px;z-index:3;color:#9aa6ac;font-size:11px;display:none}
+  #view.popped #scene{display:none}
+  #popPh{display:none;position:absolute;inset:0;z-index:1;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;background:#0b0f12;color:#9aa6ac;padding:20px}
+  #popPh .big{color:var(--brass);font-size:16px}
+  #popPh span{font-size:12px;line-height:1.5;max-width:420px}
   /* timeline */
   #tl{background:#10151a;border-bottom:1px solid var(--line);padding:7px 10px;user-select:none}
   #tlbtns{display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
@@ -115,6 +119,7 @@
     <b>МТК-24 · студия сценария</b>
     <button id="saveBtn" class="prim" title="записать data/scenario.js (Ctrl+S)">💾 сохранить</button>
     <button id="exportBtn">⤓ экспорт JS</button>
+    <button id="popBtn" title="вынести превью в отдельное окно — перетащи на соседний монитор">⧉ превью на соседний экран</button>
     <span id="status"></span>
     <span class="sp"></span>
     <span class="mini">правки видны в 3D сразу · клик по объекту в сцене — его свойства</span>
@@ -134,6 +139,11 @@
     </div>
     <div id="ovr"><div class="lbl">ОБЪЕКТ</div><div class="nm" id="ovrName">— клик по зданию —</div></div>
     <div id="camhint">🎥 свободный облёт: тащи — поворот, колесо — зум · поставь камеру и жми «● ключ камеры»</div>
+    <div id="popPh">
+      <div class="big">🖥️ Превью открыто в отдельном окне</div>
+      <span>Перетащи его на соседний монитор · «⛶ на весь экран» — кнопкой в самом окне.<br>Управление (кадры, камера, правки) — отсюда, всё синхронно.</span>
+      <button id="popPhBack" class="prim">▣ вернуть превью в студию</button>
+    </div>
   </div>
 
   <!-- timeline -->
@@ -221,19 +231,51 @@ const cur = () => SCN.shots[selIdx];
 function recalcTiming(){ let acc=0; SCN.shots.forEach(s=>{ const d=Math.max(0.1,s.__dur!=null?s.__dur:(s.t1-s.t0));
   s.t0=+acc.toFixed(3); acc=+(acc+d).toFixed(3); s.t1=+acc.toFixed(3); s.__dur=d; }); SCN.duration=+acc.toFixed(3); }
 
-// ───────── мост к 3D-сцене ─────────
+// ───────── мост к 3D-сцене (iframe ИЛИ вынесенное окно превью) ─────────
 const frame = $("scene");
-function E(){ try { const cw = frame.contentWindow; return (cw && cw.MTK24_EDIT) || null; } catch(e){ return null; } }
+let popWin = null;                                   // окно превью на соседнем мониторе (window.open)
+function targetWin(){ return (popWin && !popWin.closed) ? popWin : (frame.contentWindow || null); }
+function E(){ try { const w = targetWin(); return (w && w.MTK24_EDIT) || null; } catch(e){ return null; } }
 function stripInternal(s){ const r={}; for (const k in s){ if (k.slice(0,2)==="__") continue; r[k]=s[k]; } return r; }
-// синхронизировать SCN студии в сцену (мутируем общий объект) + перерисовать кадр
+// синхронизировать SCN студии в активную цель (мутируем её общий объект) + перерисовать кадр
 function pushScene(){ const e=E(); if (!e) return; const sc=e.scenario();
   sc.duration=SCN.duration; sc.fps=SCN.fps; sc.shots.length=0; SCN.shots.forEach(s=>sc.shots.push(stripInternal(s))); e.reapply(); }
-let sceneReady = false;
-function onSceneLoad(){ sceneReady=false; let n=0;
-  const tryInit = () => { const e=E(); if (e){ sceneReady=true; e.onPick = onPick; pushScene(); e.gotoShot(selIdx); applyCamMode(); }
-    else if (n++<20) setTimeout(tryInit, 400); };
-  tryInit(); }
+// инициализация активной цели: подписка на клик, синхронизация данных, переход на кадр, режим камеры
+function initTarget(){ const e=E(); if (!e) return false; e.onPick = onPick; pushScene(); e.gotoShot(selIdx); applyCamMode(); return true; }
+// дождаться MTK24_EDIT в окне (сцена грузится асинхронно) → cb
+function waitBridge(getter, cb, n){ n=n||0; let e=null; try{ e=getter(); }catch(_){}
+  if (e) cb(e); else if (n<30) setTimeout(()=>waitBridge(getter, cb, n+1), 350); }
+const iframeBridge = () => { try { return frame.contentWindow.MTK24_EDIT || null; } catch(e){ return null; } };
+const popBridge    = () => { try { return (popWin && !popWin.closed) ? (popWin.MTK24_EDIT || null) : null; } catch(e){ return null; } };
+function onSceneLoad(){ if (popWin && !popWin.closed) return;     // если превью вынесено — iframe не главный
+  waitBridge(iframeBridge, () => initTarget()); }
 frame.addEventListener("load", onSceneLoad);
+
+// ── вынос превью в отдельное окно (второй монитор) и возврат ──
+function popOut(){
+  if (popWin && !popWin.closed){ popWin.focus(); return; }
+  popWin = window.open("../index.html?studio=1", "mtk24-preview", "width=1280,height=760");
+  if (!popWin){ flash("браузер заблокировал окно — разреши всплывающие", true); popWin=null; return; }
+  $("view").classList.add("popped"); updatePopBtn(); flash("превью вынесено — перетащи на 2-й экран");
+  waitBridge(popBridge, () => { initTarget(); injectPopChrome(); });
+}
+function popIn(){ try{ if (popWin && !popWin.closed) popWin.close(); }catch(e){} popWin=null;
+  $("view").classList.remove("popped"); updatePopBtn();
+  waitBridge(iframeBridge, () => initTarget()); }       // вернуть управление iframe
+function updatePopBtn(){ const out=!!(popWin && !popWin.closed);
+  $("popBtn").textContent = out ? "▣ вернуть превью в студию" : "⧉ превью на соседний экран";
+  $("popBtn").classList.toggle("on", out); $("popPh").style.display = out ? "flex" : "none"; }
+// в окно превью (same-origin) добавляем кнопку «на весь экран» — клик там = валидный жест fullscreen
+function injectPopChrome(){ try{ const d=popWin.document; d.title="МТК-24 · превью (экран 2)";
+  if (d.getElementById("__fs")) return; const b=d.createElement("button"); b.id="__fs"; b.textContent="⛶ на весь экран";
+  b.style.cssText="position:fixed;right:12px;top:12px;z-index:99999;padding:8px 12px;background:rgba(12,16,18,.82);color:#D2B773;border:1px solid #3a444c;border-radius:7px;font:13px/1 Arial,sans-serif;cursor:pointer";
+  b.onmouseenter=()=>b.style.borderColor="#D2B773"; b.onmouseleave=()=>b.style.borderColor="#3a444c";
+  b.onclick=()=>{ try{ if (d.fullscreenElement) d.exitFullscreen(); else d.documentElement.requestFullscreen(); }catch(e){} };
+  d.body.appendChild(b);
+}catch(e){} }
+$("popBtn").onclick   = () => { (popWin && !popWin.closed) ? popIn() : popOut(); };
+$("popPhBack").onclick = popIn;
+addEventListener("beforeunload", () => { try{ if (popWin && !popWin.closed) popWin.close(); }catch(e){} });
 
 // ───────── правка → live + автосейв ─────────
 let pushT=null, saveT=null;
@@ -255,7 +297,9 @@ $("prev").onclick = () => { if (selIdx>0) selectShot(selIdx-1); };
 $("next").onclick = () => { if (selIdx<SCN.shots.length-1) selectShot(selIdx+1); };
 addEventListener("keydown", e => { if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
   if (e.code==="Space"){ e.preventDefault(); $("play").click(); } });
-setInterval(() => { const e=E(); if (!e) return; const t=e.getTime(), dur=e.duration()||1;
+setInterval(() => {
+  if (popWin && popWin.closed){ popIn(); return; }    // окно превью закрыли вручную → вернуть управление iframe
+  const e=E(); if (!e) return; const t=e.getTime(), dur=e.duration()||1;
   $("time").textContent = fmt(t)+" / "+fmt(dur);
   $("play").textContent = e.isPlaying()?"❚❚":"►";
   const frac=t/dur; const strip=$("strip");
