@@ -122,7 +122,11 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(COL.ink);
 scene.fog = new THREE.Fog(COL.ink, 220, 480);
 
-const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 3000);
+const BASE_FOV = 34;
+const camera = new THREE.PerspectiveCamera(BASE_FOV, 16 / 9, 0.1, 3000);
+// EDITOR BRIDGE: режим визуального редактора сцены (index.html?studio=1) — см. блок MTK24_EDIT внизу файла.
+// Прячет HUD, отдаёт канвас на весь iframe, включает клик-выбор объектов и API для tools/scenario-studio.html.
+const STUDIO = new URLSearchParams(location.search).has("studio");
 
 // OrbitControls — ручной осмотр карты (зум/поворот/панорама); тумблер «Свободная камера».
 // Выключены по умолчанию: при выкл сценой управляет покадровая камера (см. frame).
@@ -834,6 +838,23 @@ const FRAMING = {
 const camTarget = new THREE.Vector3(0, 0, 0);     // eased lookAt
 const camGoalPos = new THREE.Vector3();
 const camGoalLook = new THREE.Vector3();
+let camGoalFov = BASE_FOV;                         // цель fov (пресет = BASE_FOV; кейфреймы камеры могут менять)
+// Камера кадра = пресет focus/framing ЛИБО (если есть) кейфреймы shot.camera:[{at,pos,look,fov}].
+// Интерполяция по lp кадра (smoothstep), клампы по краям. См. применение в tick().
+function cameraKeyAt(keys, lp) {
+  const k = keys.slice().sort((a, b) => (a.at || 0) - (b.at || 0));
+  if (lp <= (k[0].at || 0)) return k[0];
+  const last = k[k.length - 1]; if (lp >= (last.at || 0)) return last;
+  for (let i = 0; i < k.length - 1; i++) {
+    const a = k[i], b = k[i + 1];
+    if (lp >= (a.at || 0) && lp <= (b.at || 0)) {
+      let tt = ((lp - (a.at || 0)) / ((b.at - a.at) || 1)); tt = tt * tt * (3 - 2 * tt);
+      const mix = (p, q) => [0, 1, 2].map((j) => p[j] + (q[j] - p[j]) * tt);
+      return { pos: mix(a.pos, b.pos), look: mix(a.look, b.look), fov: (a.fov || BASE_FOV) + ((b.fov || BASE_FOV) - (a.fov || BASE_FOV)) * tt };
+    }
+  }
+  return last;
+}
 
 function focusCentroid(shot) {
   const keys = shot.focus && shot.focus.length ? shot.focus : Object.keys(LOC.points).slice(0, 1);
@@ -848,6 +869,7 @@ function setFraming(shot) {
   camGoalLook.copy(uvToWorld(c.u, c.v, 0));
   const p = f.pitch * Math.PI / 180;
   camGoalPos.set(camGoalLook.x, f.R * Math.sin(p), camGoalLook.z + f.R * Math.cos(p));
+  camGoalFov = BASE_FOV;                            // база; кейфреймы shot.camera переопределят в tick()
 }
 
 // ----------------------------------------------------------------- HUD
@@ -987,10 +1009,17 @@ function tick(dt, snap) {
   if (FX_SET.freeCam) {
     controls.update();
   } else {
+    if (s.camera && s.camera.length) {               // кейфреймы камеры кадра переопределяют пресет framing
+      const kf = cameraKeyAt(s.camera, lp);
+      camGoalPos.set(kf.pos[0], kf.pos[1], kf.pos[2]);
+      camGoalLook.set(kf.look[0], kf.look[1], kf.look[2]);
+      if (kf.fov) camGoalFov = kf.fov;
+    }
     const k = snap ? 1 : 1 - Math.pow(0.0016, dt);    // ease camera (snap=мгновенно — инвариант)
     camera.position.lerp(camGoalPos, k);
     camTarget.lerp(camGoalLook, k);
     camera.lookAt(camTarget);
+    if (Math.abs(camera.fov - camGoalFov) > 0.01) { camera.fov += (camGoalFov - camera.fov) * k; camera.updateProjectionMatrix(); }
   }
 
   updateObjects(lp, animT);
@@ -1158,6 +1187,9 @@ canvas.addEventListener("pointermove", (e) => {
 canvas.addEventListener("pointerup", () => { downXY = null; if (dragObj) { dragObj = null; if (FX_SET.freeCam) controls.enabled = true; } });
 canvas.addEventListener("click", (e) => {
   if (didDrag) { didDrag = false; return; }          // это был драг (камера/перемещение), не клик
+  if (STUDIO && window.MTK24_EDIT && MTK24_EDIT.onPick) {         // studio: клик = выбрать объект (null = снять выбор)
+    MTK24_EDIT.onPick(pickKeyAt(e.clientX, e.clientY)); return;
+  }
   const key = pickKeyAt(e.clientX, e.clientY);
   if (!key) return;
   if (FX_SET.editObjects) { sel = key; renderEditor(); return; }  // режим правки — выбрать объект
@@ -1221,10 +1253,12 @@ const WORK_ASPECT = 679 / 592;     // ≈1.147 — bbox точной формы 
 const TRANSPORT_H = 48;            // нижняя полоса таймлайна, px
 function resize() {
   // ГЗК (полный диктор-текст) — правая панель; таймлайн — снизу. Рабочий экран — слева.
-  const techW = Math.max(280, Math.min(460, window.innerWidth * 0.28));
+  // STUDIO: HUD скрыт (CSS внизу), канвас занимает весь iframe (с letterbox по WORK_ASPECT — реальный кадр ТЗ).
+  const techW = STUDIO ? 0 : Math.max(280, Math.min(460, window.innerWidth * 0.28));
+  const transportH = STUDIO ? 0 : TRANSPORT_H;
   document.documentElement.style.setProperty("--techW", techW + "px");
-  document.documentElement.style.setProperty("--transportH", TRANSPORT_H + "px");
-  const availW = window.innerWidth - techW, availH = window.innerHeight - TRANSPORT_H;
+  document.documentElement.style.setProperty("--transportH", transportH + "px");
+  const availW = window.innerWidth - techW, availH = window.innerHeight - transportH;
   const wH = Math.min(availH, availW / WORK_ASPECT);
   const wW = wH * WORK_ASPECT;
   const work = document.getElementById("work");
@@ -1486,3 +1520,43 @@ function boot() {
   requestAnimationFrame(frame);
   buildCityMassing();                               // Ф7: массинг города (async, после 1-го кадра)
 }
+
+// ============================================================================
+// EDITOR BRIDGE — API для визуального редактора tools/scenario-studio.html.
+// Активен всегда (безвреден в проде), но HUD прячется и клик=выбор только в STUDIO
+// (index.html?studio=1). Студия — same-origin родитель iframe — зовёт window.MTK24_EDIT
+// напрямую: перемотка, play/pause, свободная/покадровая камера, get/setCam (запись
+// кейфреймов), reapply() после правки общего объекта window.MTK24_SCENARIO.
+// ============================================================================
+if (STUDIO) {                                       // спрятать HUD-хром, отдать канвас на весь iframe
+  document.body.classList.add("studio");
+  const st = document.createElement("style");
+  st.textContent = `body.studio .brand,body.studio .clockbox,body.studio .forces,body.studio .ill,
+    body.studio .narration,body.studio .quote,body.studio .tech,body.studio .transport{display:none!important}
+    body.studio{background:#0b0f12}`;
+  document.head.appendChild(st);
+}
+window.MTK24_EDIT = {
+  STUDIO,
+  onPick: null,                                     // студия назначает: (objKey|null) => ...
+  THREE, scene, camera, controls, get objects() { return objects; }, scenario() { return SCN; },
+  // транспорт
+  duration() { return SCN.duration; },
+  getTime() { return t; },
+  seek(tt) { t = Math.max(0, Math.min(SCN.duration - 0.001, +tt || 0)); curIdx = -1; },
+  gotoShot(i) { const sh = SCN.shots[i]; if (sh) { t = sh.t0; curIdx = -1; } },
+  isPlaying() { return playing; },
+  setPlaying(p) { playing = !!p; if (hud.play) hud.play.textContent = playing ? "❚❚" : "►"; if (window.MTK24_AUDIO) window.MTK24_AUDIO.setPlaying(playing); },
+  reapply() { curIdx = -1; },                       // перерисовать текущий кадр (после правки SCN студией)
+  // камера
+  isFreeCam() { return FX_SET.freeCam; },
+  setFreeCam(on) { setFreeCam(!!on); },
+  getCam() { const look = FX_SET.freeCam ? controls.target : camTarget;
+    return { pos: camera.position.toArray().map((r) => +r.toFixed(2)), look: look.toArray().map((r) => +r.toFixed(2)), fov: +camera.fov.toFixed(1) }; },
+  setCam(pos, look, fov) {
+    if (pos) camera.position.set(pos[0], pos[1], pos[2]);
+    if (look) { camTarget.set(look[0], look[1], look[2]); controls.target.set(look[0], look[1], look[2]); }
+    if (fov) { camera.fov = fov; camGoalFov = fov; camera.updateProjectionMatrix(); }
+    camera.lookAt(camTarget);
+  },
+};
