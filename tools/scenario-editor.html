@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>МТК №24 — редактор сценария</title>
+<style>
+  :root{--paper:#F7F9EF;--brass:#D2B773;--red:#A02128;--redL:#E2412B;--ink:#14181b;--vrk:#E8C24A;--pg:#cfd6da;}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#0c1012;color:var(--paper);
+    font-family:"Helvetica Neue",Arial,sans-serif;font-size:13px;overflow:hidden}
+  /* ---- header ---- */
+  #bar{position:fixed;top:0;left:0;right:0;height:46px;display:flex;align-items:center;gap:8px;
+    padding:0 12px;background:#181d21;border-bottom:1px solid #2a3137;z-index:30}
+  #bar b{color:var(--brass);letter-spacing:.04em;white-space:nowrap}
+  button,select,input,textarea{background:#222a30;color:var(--paper);border:1px solid #3a444c;border-radius:5px;
+    padding:5px 8px;font-size:13px}
+  button{cursor:pointer}
+  button:hover{border-color:var(--brass)}
+  button.on{background:var(--brass);color:#181d21;border-color:var(--brass)}
+  button.prim{background:var(--red);border-color:var(--red);color:#fff}
+  button.prim:hover{filter:brightness(1.12)}
+  #status{font-size:12px;min-width:120px;font-weight:600}
+  #hint{margin-left:auto;color:#8b969c;font-size:11px}
+  /* ---- 3-pane body ---- */
+  #app{position:fixed;top:46px;left:0;right:0;bottom:0;display:grid;grid-template-columns:236px 1fr 392px}
+  .pane{overflow:auto;height:100%}
+  #tl{border-right:1px solid #2a3137;background:#10151a}
+  #tlhead{position:sticky;top:0;background:#10151a;padding:8px;display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid #2a3137;z-index:2}
+  #tlhead button{padding:4px 7px;font-size:12px}
+  .shot{padding:7px 9px;border-bottom:1px solid #1d242a;cursor:pointer;position:relative}
+  .shot:hover{background:#161d23}
+  .shot.sel{background:#222a30;box-shadow:inset 3px 0 0 var(--redL)}
+  .shot .lab{color:var(--brass);font-size:10px;letter-spacing:.06em}
+  .shot .tt{font-weight:600;margin:1px 0 2px;line-height:1.2}
+  .shot .meta{color:#8b969c;font-size:11px;font-variant-numeric:tabular-nums}
+  .shot .badges{margin-top:3px;font-size:11px;letter-spacing:.02em}
+  .shot .ord{position:absolute;right:6px;top:6px;display:flex;flex-direction:column;gap:2px}
+  .shot .ord button{padding:0 5px;font-size:10px;line-height:15px}
+  /* ---- form ---- */
+  #form{padding:14px 16px 60px}
+  #form h2{margin:0 0 10px;font-size:15px;color:var(--brass)}
+  .grp{border:1px solid #283038;border-radius:7px;padding:10px 12px;margin:0 0 12px;background:#11161b}
+  .grp>legend,.grp>.gt{color:var(--brass);font-size:11px;letter-spacing:.07em;text-transform:uppercase;margin:-2px 0 8px;display:block}
+  .row{display:flex;gap:8px;align-items:center;margin:0 0 7px;flex-wrap:wrap}
+  .row>label{color:#9aa6ac;min-width:84px;font-size:12px}
+  .row input[type=text],.row input[type=number],.row select{flex:1;min-width:60px}
+  .row textarea{width:100%;min-height:54px;resize:vertical;font-family:inherit;line-height:1.35}
+  .full{flex-direction:column;align-items:stretch}
+  .full>label{margin-bottom:3px}
+  .mini{color:#7e8a90;font-size:11px;font-variant-numeric:tabular-nums}
+  .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{display:inline-flex;align-items:center;gap:4px;background:#1c242b;border:1px solid #313b43;border-radius:14px;padding:2px 9px;cursor:pointer;font-size:12px;user-select:none}
+  .chip.on{background:var(--brass);color:#181d21;border-color:var(--brass)}
+  .chip.dir{font-style:italic}
+  /* sub-list rows (points/routes/fx) */
+  .item{border:1px solid #2a333b;border-radius:6px;padding:8px;margin:0 0 7px;background:#0f1418}
+  .item .top{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .item .top select,.item .top input{padding:3px 6px}
+  .item .ttl{font-size:11px;color:var(--brass);min-width:42px}
+  .item .extra{margin-top:7px;padding-top:7px;border-top:1px dashed #2a333b;display:none}
+  .item .extra.open{display:block}
+  .del{background:#2a1416;border-color:#5a2226;color:#e9a;padding:3px 8px}
+  .addbtn{font-size:12px;padding:4px 9px}
+  .sl{display:flex;align-items:center;gap:6px;flex:1}
+  .sl input[type=range]{flex:1}
+  .sl .v{min-width:34px;text-align:right;font-variant-numeric:tabular-nums;color:var(--brass)}
+  /* ---- right pane ---- */
+  #right{border-left:1px solid #2a3137;background:#0e1317;display:flex;flex-direction:column;overflow:hidden}
+  #pvhead{padding:6px 8px;display:flex;gap:6px;align-items:center;border-bottom:1px solid #2a3137}
+  #pvhead .t{color:var(--brass);font-size:11px;letter-spacing:.05em}
+  #preview{width:100%;flex:1 1 50%;border:0;background:#000;min-height:160px}
+  #mapwrap{flex:1 1 50%;display:flex;flex-direction:column;border-top:1px solid #2a3137;min-height:160px}
+  #mapwrap .t{padding:5px 8px;color:var(--brass);font-size:11px;border-bottom:1px solid #1d242a}
+  #map{flex:1;width:100%;display:block;cursor:pointer;background:#0c1012}
+  /* clip picker + export modal */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.74);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal.show{display:flex}
+  .modal .box{width:min(960px,94vw);max-height:88vh;overflow:auto;background:#181d21;border:1px solid var(--brass);border-radius:9px;padding:16px;display:flex;flex-direction:column;gap:12px}
+  .modal .mh{display:flex;align-items:center;gap:10px}
+  .modal .mh b{color:var(--brass)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+  .clip-card{border:2px solid #2a333b;border-radius:7px;overflow:hidden;cursor:pointer;background:#0c0c0c}
+  .clip-card:hover{border-color:var(--brass)}
+  .clip-card.sel{border-color:var(--redL);box-shadow:0 0 0 2px var(--redL)}
+  .clip-foot{position:relative;isolation:isolate;overflow:hidden;background:#000;aspect-ratio:634/480}
+  .clip-foot video{display:block;width:100%;height:100%;object-fit:cover;filter:grayscale(1) brightness(var(--f-bright,1)) contrast(var(--f-contrast,1))}
+  .clip-foot::before,.clip-foot::after{content:'';position:absolute;inset:0;pointer-events:none;opacity:var(--tint-strength,0)}
+  .clip-foot::before{background:var(--tint-shadow);mix-blend-mode:multiply}
+  .clip-foot::after{background:var(--tint-highlight);mix-blend-mode:screen}
+  .clip-meta{padding:5px 7px;font-size:11px;line-height:1.3}
+  .clip-meta b{display:block;color:var(--paper)}
+  .clip-meta span{color:#8b969c}
+  textarea#out{width:100%;height:60vh;background:#0c1012;color:var(--paper);border:1px solid #3a444c;border-radius:6px;
+    font-family:ui-monospace,Menlo,monospace;font-size:12px;padding:10px;white-space:pre}
+  .thumb{width:30px;height:30px;object-fit:cover;border-radius:3px;border:1px solid #3a444c;vertical-align:middle}
+</style>
+</head>
+<body>
+  <div id="bar">
+    <b>МТК-24 · редактор сценария</b>
+    <button id="saveBtn" class="prim" title="записать в data/scenario.js (Ctrl+S)">💾 сохранить</button>
+    <button id="showBtn" title="сохранить и показать правки в 3D-сцене справа">🔄 показать в сцене</button>
+    <button id="exportBtn" title="посмотреть/скопировать получившийся JS">⤓ экспорт JS</button>
+    <span id="status"></span>
+    <span id="hint">клик по кадру — выбрать и перемотать превью · правки сохраняются автоматически · «показать в сцене» перезагружает превью</span>
+  </div>
+
+  <div id="app">
+    <div id="tl" class="pane">
+      <div id="tlhead">
+        <button id="addShot" title="добавить кадр в конец">＋ кадр</button>
+        <button id="dupShot" title="дублировать выбранный">⧉ дубль</button>
+        <button id="delShot" class="del" title="удалить выбранный">🗑</button>
+      </div>
+      <div id="shots"></div>
+    </div>
+
+    <div id="form" class="pane"></div>
+
+    <div id="right">
+      <div id="pvhead">
+        <span class="t">ПРЕВЬЮ СЦЕНЫ</span>
+        <button id="seekBtn" title="перемотать на начало выбранного кадра">⟲ на кадр</button>
+        <button id="reloadBtn" title="перезагрузить превью">↻</button>
+      </div>
+      <iframe id="preview" src="../index.html" allow="autoplay"></iframe>
+      <div id="mapwrap">
+        <div class="t">КАРТА КАДРА · клик по точке — добавить/убрать из кадра</div>
+        <canvas id="map"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- clip picker -->
+  <div id="clipModal" class="modal"><div class="box">
+    <div class="mh"><b id="clipTitle">Выбор клипа</b>
+      <span class="mini" id="clipHint"></span>
+      <button id="clipDone" class="prim" style="margin-left:auto;display:none">готово</button>
+      <button id="clipClose">закрыть</button></div>
+    <div id="clipGrid" class="grid"></div>
+  </div></div>
+
+  <!-- export -->
+  <div id="expModal" class="modal"><div class="box">
+    <div class="mh"><b>data/scenario.js</b>
+      <button id="copyBtn">копировать</button><button id="dlBtn">скачать</button>
+      <button id="expClose" style="margin-left:auto">закрыть</button></div>
+    <textarea id="out" spellcheck="false"></textarea>
+  </div></div>
+
+<script src="../data/locations.js"></script>
+<script src="../data/scenario.js"></script>
+<script src="../assets/footage/footage.js"></script>
+<script>
+"use strict";
+// ───────────────────────── данные / каталоги ─────────────────────────
+const LOC  = window.MTK24_LOCATIONS || { points:{}, routes:{}, directions:{} };
+const FOOT = window.MTK24_FOOTAGE   || { clips:[], dir:"assets/footage/", tint:{presets:{},default:"vrkRed"} };
+const FOOT_DIR = "../" + (FOOT.dir || "assets/footage/");
+const PT_KEYS  = Object.keys(LOC.points || {});
+const DIR_KEYS = Object.keys(LOC.directions || {});
+const RT_KEYS  = Object.keys(LOC.routes || {});
+const TINTS    = Object.keys((FOOT.tint && FOOT.tint.presets) || {});
+const ILL_KEYS = ["intro_petrograd","k1_rabochiy_put","k4_smolny_entrance","k7_archive","k7_bronevik",
+                  "k7_ships_layout","k8_aurora","k9_kerensky_office","k9_malachite","k9_soldiers"];
+const FRAMINGS = ["wide","tight","route"];
+const FORCES   = [["vrk","ВРК (жёлтый ★)"],["pg","Временные (чёрный)"]];
+// все fx-типы: первыми — медиа-врезки (главная фича), затем существующие
+const FX_TYPES = [
+  ["neva","🎬 видео на Неве"],["insert","🎬 врезка (уголок/лайтбокс)"],
+  ["background","🎬 фон/подложка"],["walls","🎬 видео-стены"],
+  ["telegrams","телеграммы"],["wave","волна"],["flash","вспышка"],
+  ["ring","кольцо"],["shot","выстрел «Авроры»"],["flood","заливка"],["rays","лучи"],
+];
+const FOOTAGE_FX = new Set(["neva","insert","background","walls"]);
+
+if (!window.MTK24_SCENARIO) {
+  document.getElementById("form").innerHTML = "<h2>Ошибка</h2><p>Не загружен data/scenario.js. Открой страницу через сервер: <code>python3 tools/edit_server.py 8124</code></p>";
+  throw new Error("no scenario");
+}
+// рабочая копия (глубокий клон), исходник не трогаем
+const SCN = JSON.parse(JSON.stringify(window.MTK24_SCENARIO));
+SCN.fps = SCN.fps || 30;
+SCN.shots.forEach(s => { s.__dur = +(s.t1 - s.t0).toFixed(3); });   // длительность кадра (служебное)
+let selIdx = 0;
+
+// ───────────────────────── helpers ─────────────────────────
+function h(tag, props, ...kids){
+  const e = document.createElement(tag);
+  if (props) for (const k in props){
+    const v = props[k];
+    if (v == null) continue;
+    if (k === "class") e.className = v;
+    else if (k === "style") e.style.cssText = v;
+    else if (k === "html") e.innerHTML = v;
+    else if (k.slice(0,2) === "on") e[k.toLowerCase()] = v;
+    else e.setAttribute(k, v);
+  }
+  for (const c of kids.flat()){ if (c == null || c === false) continue; e.append(c.nodeType ? c : document.createTextNode(c)); }
+  return e;
+}
+const fmt = s => { s = Math.max(0, Math.round(s)); return Math.floor(s/60)+":"+String(s%60).padStart(2,"0"); };
+const pad2 = n => String(n).padStart(2,"0");
+// минуты от 24 окт 00:00 → «25 окт 02:00»
+function storyStr(min){ if (min == null || min === "") return ""; min = +min;
+  const day = Math.floor(min/1440), d = 24 + day, m = ((min%1440)+1440)%1440;
+  return d + " окт " + pad2(Math.floor(m/60)) + ":" + pad2(m%60); }
+function shotLabel(i){ const s = SCN.shots[i];
+  if (s.id === "intro")  return "ВСТУПЛЕНИЕ";
+  if (s.id === "finale") return "ФИНАЛ";
+  return "КАДР " + i; }
+function ptName(k){ const p = LOC.points[k]; return p ? (p.name || k) : k; }
+function clipById(id){ return (FOOT.clips || []).find(c => c.id === id); }
+function clipLabel(id){ const c = clipById(id); return c ? c.title : (id || "—"); }
+
+// пересчёт тайминга «встык»: t0/t1 из длительностей, duration = сумма
+function recalcTiming(){
+  let acc = 0;
+  SCN.shots.forEach(s => { const d = Math.max(0.1, s.__dur != null ? s.__dur : (s.t1 - s.t0));
+    s.t0 = +acc.toFixed(3); acc = +(acc + d).toFixed(3); s.t1 = +acc.toFixed(3); s.__dur = d; });
+  SCN.duration = +acc.toFixed(3);
+}
+
+// ───────────────────────── таймлайн (левая колонка) ─────────────────────────
+function renderTimeline(){
+  const box = document.getElementById("shots"); box.innerHTML = "";
+  SCN.shots.forEach((s, i) => {
+    const footN = (s.fx || []).filter(f => FOOTAGE_FX.has(f.type)).length;
+    const fxN   = (s.fx || []).length - footN;
+    const badges = [];
+    if (footN) badges.push("🎬"+footN);
+    if (fxN)   badges.push("✦"+fxN);
+    if (s.routes && s.routes.length) badges.push("↝"+s.routes.length);
+    if (s.illustration) badges.push("🖼");
+    const card = h("div", { class:"shot"+(i===selIdx?" sel":""), onclick:() => selectShot(i) },
+      h("div", { class:"lab" }, shotLabel(i)),
+      h("div", { class:"tt" }, s.title || "(без названия)"),
+      h("div", { class:"meta" }, fmt(s.t0)+"–"+fmt(s.t1)+" · "+(s.__dur)+"с"),
+      badges.length ? h("div", { class:"badges" }, badges.join("  ")) : null,
+      h("div", { class:"ord" },
+        h("button", { title:"вверх", onclick:e => { e.stopPropagation(); moveShot(i,-1); } }, "▲"),
+        h("button", { title:"вниз", onclick:e => { e.stopPropagation(); moveShot(i, 1); } }, "▼")),
+    );
+    box.appendChild(card);
+  });
+}
+function selectShot(i){ selIdx = i; renderTimeline(); renderForm(); drawMap(); seekPreview(SCN.shots[i].t0); }
+function moveShot(i, d){ const j = i + d; if (j < 0 || j >= SCN.shots.length) return;
+  const [s] = SCN.shots.splice(i,1); SCN.shots.splice(j,0,s);
+  selIdx = j; recalcTiming(); renderAll(); autosave(); }
+document.getElementById("addShot").onclick = () => {
+  const last = SCN.shots[SCN.shots.length-1] || {};
+  SCN.shots.push({ id:"shot_"+(SCN.shots.length+1), __dur:15, t0:0, t1:15,
+    s0:(last.s1!=null?last.s1:0), s1:(last.s1!=null?last.s1+60:60),
+    date:"", title:"Новый кадр", narration:"", voFull:"", framing:"wide", focus:[], points:[] });
+  selIdx = SCN.shots.length-1; recalcTiming(); renderAll(); autosave();
+};
+document.getElementById("dupShot").onclick = () => {
+  const c = JSON.parse(JSON.stringify(SCN.shots[selIdx]));
+  c.id = (c.id||"shot") + "_copy";
+  SCN.shots.splice(selIdx+1, 0, c); selIdx++; recalcTiming(); renderAll(); autosave();
+};
+document.getElementById("delShot").onclick = () => {
+  if (SCN.shots.length <= 1) { flash("нельзя удалить последний кадр", true); return; }
+  if (!confirm("Удалить кадр «"+(SCN.shots[selIdx].title||"")+"»?")) return;
+  SCN.shots.splice(selIdx,1); selIdx = Math.max(0, selIdx-1); recalcTiming(); renderAll(); autosave();
+};
+
+// ───────────────────────── форма кадра (центр) ─────────────────────────
+// общие конструкторы полей
+function rowField(label, ...controls){ return h("div", { class:"row" }, label!=null ? h("label", null, label) : null, ...controls); }
+function txt(obj, key, ph){ return h("input", { type:"text", value:obj[key]||"", placeholder:ph||"",
+  oninput:e => { if (e.target.value==="") delete obj[key]; else obj[key]=e.target.value; touch(); } }); }
+function area(obj, key, ph){ const t = h("textarea", { placeholder:ph||"",
+  oninput:e => { if (e.target.value==="") delete obj[key]; else obj[key]=e.target.value; touch(); } }); t.value = obj[key]||""; return t; }
+function numF(obj, key, opts){ opts=opts||{}; return h("input", { type:"number", step:opts.step||1, min:opts.min, max:opts.max,
+  value:(obj[key]!=null?obj[key]:""), placeholder:opts.ph||"",
+  oninput:e => { const v=e.target.value; if (v==="") delete obj[key]; else obj[key]=+v; touch(); if (opts.cb) opts.cb(); } }); }
+function selF(obj, key, options, opts){ opts=opts||{};
+  const s = h("select", { onchange:e => { const v=e.target.value; if (v===""&&opts.allowEmpty) delete obj[key]; else obj[key]=opts.num?+v:v; touch(); if (opts.cb) opts.cb(); } });
+  if (opts.allowEmpty) s.appendChild(h("option", { value:"" }, opts.emptyLabel||"—"));
+  options.forEach(o => { const [val,lab] = Array.isArray(o)?o:[o,o]; s.appendChild(h("option", { value:val }, lab)); });
+  s.value = obj[key]!=null ? obj[key] : (opts.allowEmpty?"":(options[0]&&(Array.isArray(options[0])?options[0][0]:options[0])));
+  return s; }
+function chkF(obj, key, label){ const id = "c"+Math.random().toString(36).slice(2);
+  const c = h("input", { type:"checkbox", id, onchange:e => { if (e.target.checked) obj[key]=true; else delete obj[key]; touch(); } });
+  c.checked = !!obj[key];
+  return h("label", { style:"min-width:0;display:inline-flex;gap:4px;align-items:center;color:#cfd6da;cursor:pointer" }, c, label); }
+// слайдер 0..1 (at / opacity), с авто-удалением при сбросе
+function sliderF(obj, key, def){
+  const v = h("span", { class:"v" }, obj[key]!=null?(+obj[key]).toFixed(2):"—");
+  const r = h("input", { type:"range", min:0, max:1, step:0.01, value:(obj[key]!=null?obj[key]:(def!=null?def:0)),
+    oninput:e => { obj[key]=+e.target.value; v.textContent=(+e.target.value).toFixed(2); touch(); } });
+  return h("div", { class:"sl" }, r, v); }
+// набор чипов-мультивыбор (focus, telegrams.to, walls.clips)
+function chips(arr, options, opts){ opts=opts||{};
+  const wrap = h("div", { class:"chips" });
+  options.forEach(o => { const [val,lab,cls] = Array.isArray(o)?o:[o,o]; const on = arr.includes(val);
+    wrap.appendChild(h("span", { class:"chip"+(on?" on":"")+(cls?" "+cls:""),
+      onclick:() => { const k = arr.indexOf(val); if (k<0) arr.push(val); else arr.splice(k,1); touch(); if (opts.cb) opts.cb(); else wrap.replaceWith(chips(arr, options, opts)); } }, lab)); });
+  return wrap; }
+
+const ptOptions  = () => PT_KEYS.map(k => [k, k+" — "+ptName(k)]);
+const ptDirChips = () => PT_KEYS.map(k => [k, ptName(k)]).concat(DIR_KEYS.map(k => [k, "→ "+k, "dir"]));
+
+function renderForm(){
+  const f = document.getElementById("form"); f.innerHTML = "";
+  const s = SCN.shots[selIdx];
+  f.appendChild(h("h2", null, shotLabel(selIdx)+" · "+(s.title||"")));
+
+  // — основное —
+  const gMain = h("fieldset", { class:"grp" }, h("legend", null, "Основное"));
+  gMain.appendChild(rowField("id", txt(s,"id","латиницей, уникально")));
+  gMain.appendChild(rowField("заголовок", txt(s,"title")));
+  gMain.appendChild(rowField("дата (титр)", txt(s,"date","24 октября · вечер")));
+  // тайминг
+  const durRead = h("span", { class:"mini" }, "");
+  const upd = () => { durRead.textContent = "видео: "+fmt(s.t0)+"–"+fmt(s.t1)+" · всего "+fmt(SCN.duration); };
+  gMain.appendChild(rowField("длит., с", numF(s,"__dur",{ step:0.5, min:0.1, cb:() => { recalcTiming(); renderTimeline(); upd(); } }), durRead));
+  upd();
+  // время события
+  const s0r = h("span", { class:"mini" }, storyStr(s.s0)), s1r = h("span", { class:"mini" }, storyStr(s.s1));
+  gMain.appendChild(rowField("событие, мин", numF(s,"s0",{ ph:"s0", cb:() => s0r.textContent=storyStr(s.s0) }), s0r,
+    h("span",{style:"color:#5a6066"},"→"), numF(s,"s1",{ ph:"s1", cb:() => s1r.textContent=storyStr(s.s1) }), s1r));
+  gMain.appendChild(h("div", { class:"mini", style:"margin-top:-2px" }, "минуты от 24 окт 00:00 (25 окт = +1440, 26 окт = +2880)"));
+  f.appendChild(gMain);
+
+  // — тексты —
+  const gTxt = h("fieldset", { class:"grp" }, h("legend", null, "Тексты"));
+  gTxt.appendChild(h("div",{class:"row full"}, h("label",null,"narration · титр на экране"), area(s,"narration")));
+  gTxt.appendChild(h("div",{class:"row full"}, h("label",null,"voFull · полный текст диктора"), area(s,"voFull")));
+  gTxt.appendChild(h("div",{class:"row full"}, h("label",null,"quote · цитата"), area(s,"quote")));
+  gTxt.appendChild(rowField("cite · источник", txt(s,"cite")));
+  f.appendChild(gTxt);
+
+  // — иллюстрация —
+  const gIll = h("fieldset", { class:"grp" }, h("legend", null, "Иллюстрация"));
+  const illIn = txt(s,"illustration","ключ assets/ill/<key>.jpg");
+  illIn.setAttribute("list","illList");
+  const thumb = h("img", { class:"thumb", alt:"" });
+  const setThumb = () => { if (s.illustration){ thumb.style.display="inline-block"; thumb.src="../assets/ill/"+s.illustration+".jpg";
+      thumb.onerror = () => { thumb.onerror=null; thumb.src="../assets/ill/"+s.illustration+".gif"; }; } else thumb.style.display="none"; };
+  illIn.addEventListener("input", setThumb); setThumb();
+  gIll.appendChild(rowField("illustration", illIn, thumb));
+  gIll.appendChild(rowField("illCaption", txt(s,"illCaption","подпись под фото")));
+  f.appendChild(gIll);
+
+  // — камера —
+  const gCam = h("fieldset", { class:"grp" }, h("legend", null, "Камера"));
+  gCam.appendChild(rowField("framing", selF(s,"framing",FRAMINGS)));
+  s.focus = s.focus || [];
+  gCam.appendChild(h("div",{class:"row full"}, h("label",null,"focus · точки, на которые ведём камеру"),
+    chips(s.focus, ptOptions().map(([k,l])=>[k,ptName(k)]), { cb:() => { drawMap(); renderForm._refreshFocus(); } })));
+  f.appendChild(gCam);
+
+  // — точки —
+  f.appendChild(renderPoints(s));
+  // — маршруты —
+  f.appendChild(renderRoutes(s));
+  // — fx —
+  f.appendChild(renderFx(s));
+
+  // — звук —
+  const gS = h("fieldset", { class:"grp" }, h("legend", null, "Звук"));
+  gS.appendChild(rowField("sfx", txt(s,"sfx","напр. shot")));
+  f.appendChild(gS);
+
+  renderForm._refreshFocus = () => {};   // заглушка (focus перерисует себя сам)
+}
+
+// ---- points ----
+const PT_FLAGS = [["pulse_select"],["becomes"],["ringBlack","кольцо чёрн."],["ringRed","кольцо красн."],
+  ["encircle","окружение"],["onNeva","на Неве"],["killWinterLight","гасит свет Зимнего"]];
+function renderPoints(s){
+  const pts = s.points || (s.points = []);
+  const g = h("fieldset", { class:"grp" }, h("div", { class:"gt" }, "Точки кадра · points"));
+  pts.forEach((p, idx) => {
+    const extra = h("div", { class:"extra" });
+    const top = h("div", { class:"top" },
+      h("span", { class:"ttl" }, "#"+(idx+1)),
+      selF(p,"key",ptOptions(),{ cb:drawMap }),
+      selF(p,"force",FORCES,{ cb:drawMap }),
+      // pulse: —/true/fast
+      (() => { const sel = h("select", { onchange:e => { const v=e.target.value; if (v==="") delete p.pulse; else p.pulse = (v==="true"?true:v); touch(); } },
+          h("option",{value:""},"пульс —"), h("option",{value:"true"},"пульс"), h("option",{value:"fast"},"пульс↯"));
+        sel.value = p.pulse===true?"true":(p.pulse||""); return sel; })(),
+      // becomes red + at
+      (() => { const c = h("input",{type:"checkbox", onchange:e=>{ if(e.target.checked){p.becomes="red"; if(p.at==null)p.at=0.5;} else {delete p.becomes;delete p.at;} touch(); renderForm(); }});
+        c.checked = p.becomes==="red"; return h("label",{style:"min-width:0;display:inline-flex;gap:3px;align-items:center;color:#e89"},c,"→красн."); })(),
+      p.becomes==="red" ? h("span",{class:"sl",style:"max-width:130px"}, "at", sliderF(p,"at",0.5)) : null,
+      h("button", { class:"addbtn", title:"доп. поля", onclick:() => extra.classList.toggle("open") }, "⋯"),
+      h("button", { class:"del", onclick:() => { pts.splice(idx,1); touch(); renderForm(); drawMap(); } }, "🗑"),
+    );
+    extra.appendChild(rowField("note", txt(p,"note")));
+    extra.appendChild(rowField("time", txt(p,"time","01:25")));
+    extra.appendChild(rowField("who", txt(p,"who","кто захватывает")));
+    extra.appendChild(h("div",{class:"row"},
+      chkF(p,"ringBlack","кольцо чёрн."), chkF(p,"ringRed","кольцо красн."),
+      chkF(p,"encircle","окружение"), chkF(p,"onNeva","на Неве"), chkF(p,"killWinterLight","гасит свет Зимнего")));
+    g.appendChild(h("div", { class:"item" }, top, extra));
+  });
+  g.appendChild(h("button", { class:"addbtn", onclick:() => { pts.push({ key:PT_KEYS[0], force:(LOC.points[PT_KEYS[0]]||{}).force||"pg" }); touch(); renderForm(); drawMap(); } }, "＋ точка"));
+  return g;
+}
+
+// ---- routes ----
+function renderRoutes(s){
+  const rts = s.routes || (s.routes = []);
+  const g = h("fieldset", { class:"grp" }, h("div", { class:"gt" }, "Маршруты · routes"));
+  if (!RT_KEYS.length) g.appendChild(h("div",{class:"mini"},"в locations.js нет маршрутов"));
+  rts.forEach((r, idx) => {
+    const extra = h("div", { class:"extra" });
+    const top = h("div", { class:"top" },
+      h("span", { class:"ttl" }, "#"+(idx+1)),
+      selF(r,"key",RT_KEYS,{ cb:drawMap }),
+      selF(r,"force",FORCES),
+      h("span",{class:"sl",style:"max-width:120px"},"at",sliderF(r,"at",0)),
+      h("span",{class:"sl",style:"max-width:120px"},"dur",sliderF(r,"dur",0.4)),
+      chkF(r,"pauses","пауза"),
+      h("button", { class:"addbtn", onclick:() => extra.classList.toggle("open") }, "⋯"),
+      h("button", { class:"del", onclick:() => { rts.splice(idx,1); touch(); renderForm(); drawMap(); } }, "🗑"),
+    );
+    extra.appendChild(rowField("marker", txt(r,"marker","dot")));
+    extra.appendChild(rowField("note", txt(r,"note")));
+    g.appendChild(h("div", { class:"item" }, top, extra));
+  });
+  if (RT_KEYS.length)
+    g.appendChild(h("button", { class:"addbtn", onclick:() => { rts.push({ key:RT_KEYS[0], force:"vrk", at:0.1, dur:0.5 }); touch(); renderForm(); drawMap(); } }, "＋ маршрут"));
+  return g;
+}
+
+// ---- fx (включая медиа-врезки) ----
+function fxFields(fx, host){
+  host.innerHTML = "";
+  const add = (...n) => host.appendChild(h("div", { class:"row" }, ...n));
+  const tintSel = () => selF(fx,"tint",TINTS.map(t=>[t,(FOOT.tint.presets[t]||{}).label||t]),{ allowEmpty:true, emptyLabel:"тон по умолч." });
+  const atRow   = () => add(h("label",null,"at · момент"), sliderF(fx,"at",0));
+  switch (fx.type){
+    case "neva":
+      add(h("label",null,"клип"), clipBtn(fx,"clip",false));
+      add(h("label",null,"тон"), tintSel(), chkF(fx,"invert","инверсия (видео на суше)"));
+      add(h("label",null,"opacity"), optNumInline(fx,"opacity","авто",0,1,0.05)); atRow(); break;
+    case "insert":
+      add(h("label",null,"клип"), clipBtn(fx,"clip",false));
+      add(h("label",null,"стиль"), selF(fx,"style",[["corner","уголок"],["lightbox","лайтбокс"]]));
+      add(h("label",null,"тон"), tintSel()); atRow(); break;
+    case "background":
+      add(h("label",null,"клип"), clipBtn(fx,"clip",false));
+      add(h("label",null,"режим"), selF(fx,"mode",[["texture","подложка-текстура"],["intro","заставка"]]));
+      add(h("label",null,"тон"), tintSel());
+      add(h("label",null,"opacity"), optNumInline(fx,"opacity","0.22",0,1,0.05)); break;
+    case "walls":
+      add(h("label",null,"сторон"), selF(fx,"sides",[["1","1 (дальняя)"],["3","3 (охват)"]],{ num:true }));
+      add(h("label",null,"тон"), tintSel());
+      host.appendChild(h("div",{class:"row full"}, h("label",null,"клипы стен (по умолч. — автонабор)"), clipBtn(fx,"clips",true))); break;
+    case "telegrams":
+      add(h("label",null,"from"), selF(fx,"from",ptOptions()));
+      fx.to = fx.to || [];
+      host.appendChild(h("div",{class:"row full"}, h("label",null,"to · куда (точки/направления)"), chips(fx.to, ptDirChips())));
+      atRow(); break;
+    case "shot":
+      add(h("label",null,"from · орудие"), selF(fx,"from",ptOptions()));
+      add(h("label",null,"signalFrom"), selF(fx,"signalFrom",ptOptions(),{ allowEmpty:true }));
+      add(h("label",null,"to · цель"), selF(fx,"to",ptOptions())); atRow(); break;
+    case "ring":
+      add(h("label",null,"around"), selF(fx,"around",ptOptions())); atRow(); break;
+    case "wave": case "flood": case "rays":
+      add(h("label",null,"from"), selF(fx,"from",ptOptions())); atRow(); break;
+    case "flash":
+      atRow(); break;
+  }
+}
+function renderFx(s){
+  const arr = s.fx || (s.fx = []);
+  const g = h("fieldset", { class:"grp" }, h("div", { class:"gt" }, "Эффекты и медиа-врезки · fx"));
+  arr.forEach((fx, idx) => {
+    const host = h("div", { style:"margin-top:7px" });
+    const top = h("div", { class:"top" },
+      h("span", { class:"ttl" }, "#"+(idx+1)),
+      selF(fx,"type",FX_TYPES,{ cb:() => { // смена типа — оставляем at, чистим остальное
+        const keepAt = fx.at; for (const k in fx) if (k!=="type") delete fx[k]; if (keepAt!=null) fx.at=keepAt; fxFields(fx, host); renderTimeline(); } }),
+      FOOTAGE_FX.has(fx.type) ? h("span",{class:"mini"},"🎬 врезка") : null,
+      h("button", { class:"del", style:"margin-left:auto", onclick:() => { arr.splice(idx,1); touch(); renderForm(); } }, "🗑"),
+    );
+    fxFields(fx, host);
+    g.appendChild(h("div", { class:"item" }, top, host));
+  });
+  g.appendChild(h("div", { style:"display:flex;gap:6px;flex-wrap:wrap" },
+    h("button", { class:"addbtn", onclick:() => { arr.push({ type:"neva", tint:"vrkRed", at:0.1 }); touch(); renderForm(); renderTimeline(); } }, "＋ 🎬 медиа-врезка"),
+    h("button", { class:"addbtn", onclick:() => { arr.push({ type:"flash", at:0.5 }); touch(); renderForm(); renderTimeline(); } }, "＋ эффект")));
+  return g;
+}
+// необязательное число (пусто → удалить ключ)
+function optNumInline(obj, key, ph, mn, mx, st){ return h("input", { type:"number", step:st||0.05, min:mn, max:mx, style:"max-width:90px",
+  value:(obj[key]!=null?obj[key]:""), placeholder:ph||"",
+  oninput:e => { const v=e.target.value; if (v==="") delete obj[key]; else obj[key]=+v; touch(); } }); }
+// кнопка выбора клипа (single → строка id; multi → массив)
+function clipBtn(fx, key, multi){
+  const label = () => multi ? ((fx[key]&&fx[key].length)? fx[key].map(clipLabel).join(", ") : "автонабор клипов")
+                            : (fx[key]? clipLabel(fx[key]) : "выбрать клип…");
+  const span = h("span", { style:"flex:1;color:"+((multi?(fx[key]&&fx[key].length):fx[key])?"var(--paper)":"#8b969c") }, label());
+  const btn = h("button", { class:"addbtn", onclick:() => openClipPicker(fx, key, multi, () => { span.textContent=label();
+      span.style.color = (multi?(fx[key]&&fx[key].length):fx[key])?"var(--paper)":"#8b969c"; }) }, "🎬 выбрать");
+  return h("span", { style:"display:flex;gap:6px;align-items:center;flex:1" }, span, btn); }
+
+// ───────────────────────── clip picker (видео-сетка) ─────────────────────────
+let clipState = null;
+function openClipPicker(fx, key, multi, after){
+  clipState = { fx, key, multi, after, sel: multi ? [...(fx[key]||[])] : (fx[key]||null) };
+  const tintName = fx.tint || FOOT.tint.default;
+  document.getElementById("clipTitle").textContent = multi ? "Клипы для видео-стен" : "Выбор клипа";
+  document.getElementById("clipHint").textContent  = multi ? "клик — добавить/убрать; «готово» — применить" : "клик по клипу — выбрать";
+  document.getElementById("clipDone").style.display = multi ? "" : "none";
+  const grid = document.getElementById("clipGrid"); grid.innerHTML = "";
+  (FOOT.clips||[]).forEach(c => {
+    const foot = h("div", { class:"clip-foot" }, h("video", { src:FOOT_DIR+c.file, muted:"", loop:"", autoplay:"", playsinline:"" }));
+    window.applyFootageTint && window.applyFootageTint(foot, tintName);
+    const isSel = multi ? clipState.sel.includes(c.id) : clipState.sel===c.id;
+    const card = h("div", { class:"clip-card"+(isSel?" sel":""), "data-id":c.id, onclick:() => pickClip(c.id) },
+      foot, h("div", { class:"clip-meta" }, h("b", null, c.title), h("span", null, (c.scene||"")+" · "+(c.dur||"?")+"с · "+c.id)));
+    grid.appendChild(card);
+  });
+  document.getElementById("clipModal").classList.add("show");
+}
+function pickClip(id){
+  if (clipState.multi){ const i = clipState.sel.indexOf(id); if (i<0) clipState.sel.push(id); else clipState.sel.splice(i,1);
+    document.querySelectorAll("#clipGrid .clip-card").forEach(c => c.classList.toggle("sel", clipState.sel.includes(c.getAttribute("data-id"))));
+  } else { clipState.fx[clipState.key] = id; touch(); clipState.after && clipState.after(); closeClipPicker(); }
+}
+function closeClipPicker(){ document.getElementById("clipModal").classList.remove("show");
+  document.querySelectorAll("#clipGrid video").forEach(v => { try{ v.pause(); v.removeAttribute("src"); v.load(); }catch(e){} });
+  document.getElementById("clipGrid").innerHTML = ""; }
+document.getElementById("clipClose").onclick = closeClipPicker;
+document.getElementById("clipDone").onclick = () => { if (clipState.multi){ if (clipState.sel.length) clipState.fx[clipState.key]=clipState.sel; else delete clipState.fx[clipState.key]; touch(); clipState.after && clipState.after(); } closeClipPicker(); };
+
+// ───────────────────────── мини-карта ─────────────────────────
+const cv = document.getElementById("map"), gx = cv.getContext("2d");
+const mapImg = new Image(); let MIW=1, MIH=1, mapReady=false;
+mapImg.onload = () => { MIW=mapImg.naturalWidth; MIH=mapImg.naturalHeight; mapReady=true; drawMap(); };
+mapImg.src = "../assets/map/petrograd_2048.png";
+let mapV = { s:1, ox:0, oy:0 };
+function fitMap(){ cv.width = cv.clientWidth; cv.height = cv.clientHeight;
+  const s = Math.min(cv.width/MIW, cv.height/MIH); mapV.s=s; mapV.ox=(cv.width-MIW*s)/2; mapV.oy=(cv.height-MIH*s)/2; }
+const mScr = (u,v) => [u*MIW*mapV.s+mapV.ox, v*MIH*mapV.s+mapV.oy];
+function drawMap(){
+  if (!mapReady) return; fitMap();
+  gx.clearRect(0,0,cv.width,cv.height);
+  gx.drawImage(mapImg, mapV.ox, mapV.oy, MIW*mapV.s, MIH*mapV.s);
+  const s = SCN.shots[selIdx];
+  const inShot = new Map(); (s.points||[]).forEach(p => inShot.set(p.key, p));
+  const focus = new Set(s.focus||[]);
+  // все точки — мелко серым
+  for (const k in LOC.points){ const p = LOC.points[k]; const [x,y] = mScr(p.u,p.v);
+    if (inShot.has(k) || focus.has(k)) continue;
+    gx.beginPath(); gx.arc(x,y,2.5,0,7); gx.fillStyle="rgba(150,160,168,.5)"; gx.fill(); }
+  // фокус — кольцо
+  focus.forEach(k => { const p = LOC.points[k]; if (!p) return; const [x,y]=mScr(p.u,p.v);
+    gx.beginPath(); gx.arc(x,y,11,0,7); gx.strokeStyle="#fff"; gx.lineWidth=1.5; gx.setLineDash([3,3]); gx.stroke(); gx.setLineDash([]); });
+  // точки кадра — крупно по силе
+  inShot.forEach((pp,k) => { const p = LOC.points[k]; if (!p) return; const [x,y]=mScr(p.u,p.v);
+    const red = pp.becomes==="red"; const col = red? "#E2412B" : (pp.force==="vrk"? "#E8C24A" : "#cfd6da");
+    gx.beginPath(); gx.arc(x,y,6,0,7); gx.fillStyle=col; gx.fill(); gx.lineWidth=1.5; gx.strokeStyle="#0c1012"; gx.stroke();
+    if (pp.force==="vrk"){ gx.fillStyle="#A02128"; gx.font="bold 10px Arial"; gx.textAlign="center"; gx.textBaseline="middle"; gx.fillText("★",x,y+.5); }
+    gx.fillStyle="rgba(247,249,239,.92)"; gx.font="10px Arial"; gx.textAlign="left"; gx.textBaseline="middle"; gx.fillText(ptName(k), x+9, y); });
+}
+cv.addEventListener("click", e => {
+  if (!mapReady) return; const r = cv.getBoundingClientRect(); const x = e.clientX-r.left, y = e.clientY-r.top;
+  let best=null, bd=14*14;
+  for (const k in LOC.points){ const p=LOC.points[k]; const [px,py]=mScr(p.u,p.v); const d=(px-x)**2+(py-y)**2; if (d<bd){ bd=d; best=k; } }
+  if (!best) return;
+  const s = SCN.shots[selIdx]; s.points = s.points || [];
+  const i = s.points.findIndex(p => p.key===best);
+  if (i<0) s.points.push({ key:best, force:(LOC.points[best]||{}).force||"pg" });
+  else s.points.splice(i,1);
+  touch(); renderForm(); drawMap();
+});
+addEventListener("resize", () => { drawMap(); });
+
+// ───────────────────────── превью-iframe (перемотка без правки scene.js) ─────────────────────────
+const pv = document.getElementById("preview");
+let seekRetry = null;
+function seekPreview(sec){
+  clearTimeout(seekRetry);
+  let tries = 0;
+  const attempt = () => {
+    let ok = false;
+    try {
+      const d = pv.contentDocument, tr = d && d.getElementById("track");
+      if (tr && tr.getBoundingClientRect().width > 0){
+        const r = tr.getBoundingClientRect();
+        const frac = Math.min(0.999, Math.max(0, sec / (SCN.duration||1)));
+        tr.dispatchEvent(new MouseEvent("click", { clientX:r.left + frac*r.width, clientY:r.top + r.height/2, bubbles:true }));
+        ok = true;
+      }
+    } catch(e) {}
+    if (!ok && tries++ < 8) seekRetry = setTimeout(attempt, 700);
+  };
+  attempt();
+}
+function reloadPreview(thenSeek){
+  try { pv.contentWindow.location.reload(); } catch(e) { pv.src = pv.src; }
+  pv.addEventListener("load", () => seekPreview(thenSeek!=null?thenSeek:SCN.shots[selIdx].t0), { once:true });
+}
+pv.addEventListener("load", () => seekPreview(SCN.shots[selIdx].t0), { once:true });
+document.getElementById("seekBtn").onclick   = () => seekPreview(SCN.shots[selIdx].t0);
+document.getElementById("reloadBtn").onclick = () => reloadPreview();
+document.getElementById("showBtn").onclick   = async () => { await saveNow(); reloadPreview(SCN.shots[selIdx].t0); };
+
+// ───────────────────────── сериализация → data/scenario.js ─────────────────────────
+const HEADER =
+`/* МТК №24 «Ленин в октябре» — сценарный план видео-проекции «24–25 октября 1917».
+ *
+ * Этот файл генерируется визуальным редактором tools/scenario-editor.html.
+ * Правишь через редактор (он пишет сюда через /api/save-scenario) — ролик меняется.
+ *
+ * Поля кадра:
+ *   id, t0, t1     — видео-время кадра (сек; кадры идут встык)
+ *   s0, s1         — ВРЕМЯ СОБЫТИЯ, минуты от 24 окт 00:00 (для часов/календаря).
+ *                    24 окт = 0..1439, 25 окт = 1440..2879, 26 окт = 2880..
+ *   date, title    — подпись и заголовок
+ *   narration      — короткий титр НА экране
+ *   voFull         — ПОЛНЫЙ дикторский текст
+ *   quote, cite    — цитата титрами
+ *   illustration   — ключ фото (assets/ill/<key>.jpg), illCaption — подпись
+ *   focus, framing — куда ведём камеру
+ *   points, routes, fx — что показываем на карте (fx: эффекты + медиа-врезки neva/insert/background/walls)
+ */
+`;
+const J = v => JSON.stringify(v);
+function cleanObj(o){ const r = {}; for (const k in o){ if (k.slice(0,2)==="__") continue; const v = o[k];
+  if (v===undefined || v===null || v==="" || v===false) continue; if (Array.isArray(v) && !v.length) continue; r[k]=v; } return r; }
+function serialize(){
+  recalcTiming();
+  let out = HEADER + "window.MTK24_SCENARIO = {\n";
+  out += "  duration: " + SCN.duration + ",\n  fps: " + (SCN.fps||30) + ",\n  shots: [\n";
+  for (const s of SCN.shots){
+    out += "    {\n";
+    out += "      id: " + J(s.id||"") + ", t0: " + s.t0 + ", t1: " + s.t1 +
+           (s.s0!=null?", s0: "+s.s0:"") + (s.s1!=null?", s1: "+s.s1:"") + ",\n";
+    const dt = []; if (s.date) dt.push("date: "+J(s.date)); if (s.title) dt.push("title: "+J(s.title));
+    if (dt.length) out += "      " + dt.join(", ") + ",\n";
+    if (s.narration) out += "      narration: " + J(s.narration) + ",\n";
+    if (s.voFull)    out += "      voFull: " + J(s.voFull) + ",\n";
+    if (s.quote)     out += "      quote: " + J(s.quote) + ",\n";
+    if (s.cite)      out += "      cite: " + J(s.cite) + ",\n";
+    const il = []; if (s.illustration) il.push("illustration: "+J(s.illustration));
+    if (s.illCaption) il.push("illCaption: "+J(s.illCaption));
+    if (il.length) out += "      " + il.join(", ") + ",\n";
+    const fr = []; if (s.focus && s.focus.length) fr.push("focus: "+J(s.focus)); if (s.framing) fr.push("framing: "+J(s.framing));
+    if (fr.length) out += "      " + fr.join(", ") + ",\n";
+    const sub = (name, arr) => { if (!arr || !arr.length) return; out += "      "+name+": [\n";
+      for (const x of arr) out += "        " + J(cleanObj(x)) + ",\n"; out += "      ],\n"; };
+    sub("points", s.points); sub("routes", s.routes); sub("fx", s.fx);
+    if (s.sfx) out += "      sfx: " + J(s.sfx) + ",\n";
+    out += "    },\n";
+  }
+  out += "  ],\n};\n";
+  return out;
+}
+
+// ───────────────────────── сохранение / статус ─────────────────────────
+let saveTimer = null, warnedNoServer = false;
+function flash(msg, warn){ const s = document.getElementById("status"); s.textContent = msg;
+  s.style.color = warn ? "#E2412B" : "#7ec77e"; clearTimeout(flash._t); flash._t = setTimeout(() => { s.textContent=""; }, 2800); }
+async function saveNow(){
+  try {
+    const r = await fetch("/api/save-scenario", { method:"POST", headers:{ "Content-Type":"text/plain" }, body:serialize() });
+    if (!r.ok) throw 0; flash("сохранено в data/scenario.js");
+  } catch(e){
+    if (!warnedNoServer){ warnedNoServer = true;
+      alert("Автосохранение недоступно: запусти сервер  python3 tools/edit_server.py 8124  и открой страницу через него.\nПока что используй «экспорт JS»."); }
+    flash("⚠ не сохранено — нет сервера", true);
+  }
+}
+function autosave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 500); }
+// touch() — лёгкое обновление после правки поля: метки таймлайна + автосейв
+function touch(){ renderTimeline(); autosave(); }
+document.getElementById("saveBtn").onclick = saveNow;
+addEventListener("keydown", e => { if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==="s"){ e.preventDefault(); saveNow(); } });
+
+// ───────────────────────── экспорт-модал ─────────────────────────
+document.getElementById("exportBtn").onclick = () => { document.getElementById("out").value = serialize(); document.getElementById("expModal").classList.add("show"); };
+document.getElementById("expClose").onclick  = () => document.getElementById("expModal").classList.remove("show");
+document.getElementById("copyBtn").onclick   = () => navigator.clipboard.writeText(document.getElementById("out").value);
+document.getElementById("dlBtn").onclick     = () => { const b = new Blob([document.getElementById("out").value], { type:"text/javascript" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "scenario.js"; a.click(); };
+addEventListener("keydown", e => { if (e.key==="Escape"){ document.getElementById("expModal").classList.remove("show"); closeClipPicker(); } });
+
+// datalist для иллюстраций
+(() => { const dl = h("datalist", { id:"illList" }); const keys = new Set(ILL_KEYS);
+  SCN.shots.forEach(s => { if (s.illustration) keys.add(s.illustration); });
+  keys.forEach(k => dl.appendChild(h("option", { value:k }))); document.body.appendChild(dl); })();
+
+// ───────────────────────── boot ─────────────────────────
+function renderAll(){ renderTimeline(); renderForm(); drawMap(); }
+recalcTiming(); renderAll();
+</script>
+</body>
+</html>
